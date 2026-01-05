@@ -25,6 +25,7 @@ from livekit.plugins import groq, azure, silero
 
 from logging_setup import get_logger, Component, setup_logging
 from .config import get_config
+from .context import build_dispatch_context
 from .instructions import get_instructions
 from .observability import VoicePipelineObserver
 
@@ -44,21 +45,38 @@ async def entrypoint(ctx: JobContext):
     - An inbound call arrives (via dispatch rule)
     - An outbound call is initiated (via API)
     """
-    # Extract session_id from room name or metadata
-    session_id = ctx.room.name or "unknown"
-    session_logger = logger.with_session(session_id)
-    
-    session_logger.info(
-        "Voice pipeline starting",
-        room=ctx.room.name,
-        job_id=ctx.job.id,
-    )
-    
-    # Wait for first participant (the caller)
+    # Connect and wait for first participant (the caller)
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     
     # Get first remote participant
     participant = await ctx.wait_for_participant()
+
+    dispatch_ctx = build_dispatch_context(
+        room_name=ctx.room.name or "unknown",
+        job_metadata=getattr(ctx.job, "metadata", None),
+        participant_attributes=getattr(participant, "attributes", None),
+    )
+    session_id = dispatch_ctx.session_id
+    session_logger = logger.with_session(session_id)
+
+    # Enrich LiveKit's own job logs with correlation context (docs: JobContext.log_context_fields)
+    try:
+        ctx.log_context_fields = {
+            "room_name": ctx.room.name,
+            "session_id": session_id,
+            "flow": dispatch_ctx.flow,
+        }
+    except Exception:
+        # Best-effort only; don't crash the pipeline.
+        pass
+
+    session_logger.info(
+        "Voice pipeline starting",
+        room=ctx.room.name,
+        job_id=ctx.job.id,
+        flow=dispatch_ctx.flow,
+    )
+
     session_logger.info(
         "Participant joined",
         participant_identity=participant.identity,
