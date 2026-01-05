@@ -100,6 +100,12 @@ async def entrypoint(ctx: JobContext):
     session_logger.debug("Configuring VAD", provider="silero")
     vad = silero.VAD.load()
     
+    # Create agent with instructions
+    session_logger.info("Creating agent")
+    agent = Agent(
+        instructions=get_instructions(),
+    )
+    
     # Create agent session
     session_logger.info("Creating agent session")
     session = AgentSession(
@@ -107,10 +113,6 @@ async def entrypoint(ctx: JobContext):
         llm=llm_instance,
         tts=tts,
         vad=vad,
-        chat_ctx=llm.ChatContext().append(
-            role="system",
-            text=get_instructions(),
-        ),
         # Per VC-03: allow interruptions (barge-in)
         allow_interruptions=True,
         # Per VC-00: keep responses short
@@ -122,7 +124,7 @@ async def entrypoint(ctx: JobContext):
     
     # Start the session
     session_logger.info("Starting agent session")
-    session.start(ctx.room, participant)
+    await session.start(ctx.room, agent)
     
     # Greet the user (per VC-00: natural phone conversation)
     await session.say("Hallo, waarmee kan ik je helpen?", allow_interruptions=True)
