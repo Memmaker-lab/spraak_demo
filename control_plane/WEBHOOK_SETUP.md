@@ -57,10 +57,16 @@ Dit geeft je een publieke URL zoals: `https://abc123.ngrok.io`
 
 2. **Selecteer je project**
 
-3. **Ga naar Settings → Webhooks**
+3. **Ga naar Settings** (project settings, niet account settings)
 
-4. **Voeg webhook toe:**
-   - **URL**: `https://your-server.com/webhook` (of ngrok URL)
+4. **Zoek naar "Webhooks" sectie** - dit kan zijn:
+   - Direct in Settings pagina
+   - Onder "Integrations" of "Notifications"
+   - Als tab in Settings
+
+5. **Voeg webhook toe:**
+   - Klik op "Add Webhook" of "Create Webhook"
+   - **URL**: `https://your-ngrok-url.ngrok.io/webhook` (gebruik je ngrok URL)
    - **Events**: Selecteer de volgende events:
      - ✅ `room_started`
      - ✅ `room_finished`
@@ -70,7 +76,12 @@ Dit geeft je een publieke URL zoals: `https://abc123.ngrok.io`
      - ✅ `track_unpublished`
      - ✅ `participant_connection_aborted` (optioneel)
 
-5. **Save** de webhook configuratie
+6. **Save** de webhook configuratie
+
+**Note:** Als je "Recent deliveries" niet ziet, kan dit betekenen:
+- Webhooks zijn nog niet geconfigureerd
+- De interface is anders in jouw LiveKit versie
+- Webhook deliveries worden alleen getoond na eerste events
 
 ## Stap 4: Webhook Signature Verificatie (TODO)
 
@@ -120,6 +131,14 @@ Verwacht: `{"status":"ok","component":"control_plane"}`
 ### Test 3: Webhook Event Logging
 
 Events worden automatisch gelogd naar stdout in JSON format per OBS-00.
+
+**Check server output:** Wanneer je belt, zou je in de terminal waar de server draait moeten zien:
+- `webhook.received` - webhook ontvangen
+- `webhook.processing` - webhook wordt verwerkt  
+- `call.started` - call gestart
+- `livekit.room.created` - room aangemaakt
+- `livekit.participant.joined` - participant joined
+- etc.
 
 **Voor productie:** Redirect stdout naar een log file of log aggregator:
 
