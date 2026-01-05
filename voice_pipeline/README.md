@@ -159,11 +159,32 @@ All events are emitted as structured JSON to stdout per OBS-00:
 Key events:
 - `vad.state_changed` - VAD state transitions
 - `turn.started` - New turn begins (user speech committed)
+- `stt.final` - Final STT result (metadata only)
+- `llm.request` - LLM request started
+- `llm.response` - LLM response ready
 - `tts.started` - Agent starts speaking
 - `tts.stopped` - Agent stops speaking (cause: completed | barge_in | error)
 - `barge_in.detected` - User interrupted TTS (VC-03)
+- `ux.delay_acknowledged` - Processing took long; user got a Dutch acknowledgement (VC-02)
+- `silence.timer_started` / `silence.timer_fired` - Silence instrumentation (VC-02)
+- `call.ended` - Graceful close path on user silence (VC-02)
 
 See `LOGGING.md` for log aggregation and analysis.
+
+### Silence handling thresholds (VC-02)
+
+You can tune VC-02 timing with environment variables (milliseconds):
+
+```bash
+# Processing silence: after this, agent says “Momentje, ik denk even mee.”
+VP_PROCESSING_DELAY_ACK_MS=900
+
+# User silence: after agent finished speaking, reprompt after this delay
+VP_USER_SILENCE_REPROMPT_MS=7000
+
+# User silence: after this total delay, graceful close + call.ended
+VP_USER_SILENCE_CLOSE_MS=14000
+```
 
 ### Testing
 
@@ -272,7 +293,6 @@ tests/
 
 ### Next Steps
 
-- [ ] Implement VC-02 silence handling (delay acknowledgement, graceful close)
 - [ ] Add EOU-00 mode (VAD + End-of-Utterance detection)
 - [ ] Implement RL-00 rate limiting with user-friendly Dutch messages
 - [ ] Add function tools for actions (ACT-00)

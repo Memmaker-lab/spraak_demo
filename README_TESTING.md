@@ -97,6 +97,17 @@ De agent:
 - Luistert naar je Nederlandse spraak
 - Reageert via LLM
 - Ondersteunt barge-in
+- Voert silence handling uit (VC-02): “Momentje…” bij lange verwerking, en reprompt/close bij user-silence
+
+## Silence handling (VC-02) tunen
+
+Je kunt de timers aanpassen via environment variables (milliseconden):
+
+```bash
+VP_PROCESSING_DELAY_ACK_MS=900
+VP_USER_SILENCE_REPROMPT_MS=7000
+VP_USER_SILENCE_CLOSE_MS=14000
+```
 
 ## Troubleshooting
 
@@ -141,8 +152,13 @@ Alle events worden gelogd als JSON. Belangrijke events:
 
 ```json
 {"event_type": "turn.started", "session_id": "..."}
+{"event_type": "stt.final", "session_id": "..."}
+{"event_type": "llm.request", "session_id": "..."}
+{"event_type": "llm.response", "session_id": "..."}
 {"event_type": "tts.started", "session_id": "..."}
 {"event_type": "barge_in.detected", "session_id": "..."}
+{"event_type": "ux.delay_acknowledged", "session_id": "..."}
+{"event_type": "call.ended", "session_id": "..."}
 ```
 
 Filter logs voor alleen transcripts:
@@ -188,7 +204,6 @@ Beschikbare models: https://console.groq.com/docs/models
 
 - [x] Lokaal testen werkt
 - [ ] Productie deployment
-- [ ] VC-02: Silence handling
 - [ ] Function tools voor actions
 - [ ] EOU mode voor betere turn-taking
 
