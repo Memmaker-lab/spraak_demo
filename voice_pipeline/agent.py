@@ -10,13 +10,14 @@ import asyncio
 from typing import Optional
 from livekit import rtc
 from livekit.agents import (
+    AgentSession,
+    Agent,
     AutoSubscribe,
     JobContext,
     WorkerOptions,
     cli,
     llm,
 )
-from livekit.agents.pipeline import AgentSession
 from livekit.plugins import groq, azure, silero
 
 from logging_setup import get_logger, Component, setup_logging
