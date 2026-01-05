@@ -1,5 +1,7 @@
 # spraak_demo
 
+Spraak demo, zodat mensen kunnen bellen en testen. Toegankelijk via luscia website
+
 This repo contains **spec-first** system specifications and Cursor rules for a telephone-native Dutch voice demo.
 Implementation is intentionally left to Cursor (Python-only, current phase).
 
