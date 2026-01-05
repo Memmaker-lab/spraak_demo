@@ -56,12 +56,16 @@ All components and tests MUST be implemented in Python for the current phase.
 (Details: LK-00)
 
 ## 8. Security & Privacy by Design
-- Data minimization: send/store only what is required for the immediate purpose.
-- External providers (STT/LLM/TTS) are treated as untrusted boundaries:
-  - MUST redact/anonymize identifiers where possible.
-  - MUST NOT send raw phone numbers unless strictly required.
-- Logs MUST be privacy-aware by default (see OBS-00).
-- In conflicts between convenience and privacy, privacy wins unless an ENFORCED spec says otherwise.
+- Data minimization applies primarily to **external systems** (STT/LLM/TTS/SIP provider tooling):
+  send only what is required for the immediate purpose.
+- External providers are treated as untrusted boundaries:
+  - MUST avoid sending raw identifiers where not required.
+  - MUST NOT expand user context during retries/backoff (RL-00).
+- Internal logging MAY contain PII for audit/ops, but MUST be intentional:
+  - explicit fields (no accidental leakage via free-text)
+  - access-aware handling (intended for controlled internal viewers)
+  - never forwarded to external providers unless strictly required
+- In conflicts between convenience and minimization-to-cloud, minimization wins unless an ENFORCED spec says otherwise.
 
 ## 9. Rate limiting is expected
 External AI rate limits/throttling MUST be handled gracefully:
