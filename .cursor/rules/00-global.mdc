@@ -1,0 +1,15 @@
+---
+description: Global: spec-first, verified-only, Python-only, privacy-first voice system around LiveKit
+alwaysApply: true
+---
+
+- Treat /specs as authoritative. Never change specs to fit code.
+- No assumptions: do not invent APIs/behavior/config/limits. If unclear, ask the user.
+- Documentation-first: prefer official docs (LiveKit/provider docs) over prior knowledge.
+- Verify-before-assert: propose/run minimal tests when feasible; state uncertainty otherwise.
+- Python-only for all implementation and tests (current phase).
+- Enforce control-plane vs voice-pipeline separation (no audio in control plane; no business logic in pipeline).
+- Privacy-first: minimize PII; never log raw phone numbers; avoid storing raw transcripts by default.
+- Observability: emit structured JSON events per OBS-00; every event includes session_id.
+- Rate limiting is expected: implement bounded retries/backoff + human Dutch UX; never crash (RL-00).
+- LiveKit transport only for WebRTC/telephony bridging; correlate LiveKit events via session_id (LK-00).

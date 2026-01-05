@@ -1,0 +1,14 @@
+---
+description: Voice components: enforce VAD/EOU instrumentation + telephone-native UX hooks
+globs:
+  - "voice/**"
+  - "pipeline/**"
+  - "agents/**"
+alwaysApply: false
+---
+
+- When implementing turn detection, always emit OBS-00 events:
+  vad.state_changed, eou.prediction, endpointing.delay_applied, turn.started.
+- Ensure user-facing delay acknowledgements emit ux.delay_acknowledged.
+- Never regress barge-in behavior: tts.stopped cause="barge_in" must be emitted.
+- Keep spoken UX Dutch and non-technical (VC-00).

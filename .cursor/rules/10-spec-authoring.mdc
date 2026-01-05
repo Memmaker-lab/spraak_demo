@@ -1,0 +1,11 @@
+---
+description: Specs: keep them compact, non-duplicative, MUST/MUST NOT, Cursor-friendly
+globs:
+  - "specs/**/*.md"
+alwaysApply: false
+---
+
+- Each spec must include: ID, VERSION, STATUS, APPLIES_TO.
+- Use concise MUST/MUST NOT statements; avoid duplicated content across specs.
+- Put examples (user-facing) in Dutch; everything else in English.
+- If adding a new requirement, link it from NFR-00 and/or SP-00 instead of repeating it.
