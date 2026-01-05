@@ -158,6 +158,9 @@ if __name__ == "__main__":
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
+            # For telephony dispatch rules that specify an agentName, this must match.
+            # See LiveKit telephony docs: Agents telephony integration -> Agent dispatch.
+            agent_name=os.getenv("LIVEKIT_AGENT_NAME", ""),
             # Agent will be dispatched via LiveKit dispatch rules
         )
     )

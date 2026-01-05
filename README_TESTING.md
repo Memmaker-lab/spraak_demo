@@ -81,6 +81,15 @@ python -m voice_pipeline.agent dev
 
 De agent wacht nu op dispatch van LiveKit.
 
+> Belangrijk: als je SIP dispatch rule een `agentName` gebruikt (zoals `"Emp AI"`),
+> dan moet de worker dezelfde naam registreren via:
+>
+> ```bash
+> export LIVEKIT_AGENT_NAME="Emp AI"
+> ```
+>
+> Zonder match wordt de agent niet getriggerd.
+
 ### 2. Configureer LiveKit Dispatch
 
 **LiveKit Cloud → Agents → Dispatch Rules**

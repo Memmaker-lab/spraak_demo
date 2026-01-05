@@ -125,7 +125,7 @@ The agent must be dispatched to rooms via:
 1. **LiveKit Dispatch Rules** (for inbound calls):
    - Go to LiveKit Cloud → Agents → Dispatch
    - Create rule: "On inbound call → dispatch agent"
-   - Agent name: `voice_pipeline` (or custom)
+   - Agent name: must match `LIVEKIT_AGENT_NAME` when using explicit dispatch (telephony recommended)
 
 2. **API dispatch** (for outbound calls):
    ```python
@@ -209,6 +209,18 @@ For inbound calls:
 2. Set up dispatch rule to trigger agent
 3. Call the phone number
 4. Agent answers and starts conversation
+
+#### Agent name matching (common pitfall)
+
+If your SIP dispatch rule includes `roomConfig.agents[].agentName` (e.g. `"Emp AI"`),
+you MUST start the worker with the same agent name:
+
+```bash
+export LIVEKIT_AGENT_NAME="Emp AI"
+python -m voice_pipeline.agent dev
+```
+
+If you don't, the worker registers under the default/empty agent name and won't be selected.
 
 For outbound calls:
 
