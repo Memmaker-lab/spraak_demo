@@ -7,7 +7,10 @@ Uses Groq (STT + LLM), Azure (TTS), and Silero (VAD).
 All behavior is observable via structured events (OBS-00).
 """
 import asyncio
+import os
+from pathlib import Path
 from typing import Optional
+from dotenv import load_dotenv
 from livekit import rtc
 from livekit.agents import (
     AgentSession,
@@ -25,6 +28,10 @@ from .config import get_config
 from .instructions import get_instructions
 from .observability import VoicePipelineObserver
 
+# Load environment variables from .env_local
+env_path = Path(__file__).parent.parent / ".env_local"
+if env_path.exists():
+    load_dotenv(env_path)
 
 logger = get_logger(Component.VOICE_PIPELINE)
 
