@@ -36,9 +36,17 @@ Rules:
 - ENFORCED specs must have passing tests.
 - TESTABLE specs may have failing tests (but must be testable).
 
-## Observability contract
+## Observability & Logging
 All components emit structured JSON events per `OBS-00`.
 A future UI can be built on top of these events, but the contract is UI-agnostic.
+
+**Dual logging system:**
+- **StructuredLogger** (`logging_setup.py`) - General application logs (debug, info, warnings, errors)
+- **EventEmitter** (`control_plane/events.py`) - Business events per OBS-00 spec
+
+Both output JSON to `stdout` for easy log aggregation.
+
+📖 **See [LOGGING.md](LOGGING.md) for complete usage guide**
 
 ## Cursor rules
 Project rules live in `.cursor/rules/*.mdc`.
