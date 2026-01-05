@@ -39,6 +39,11 @@ def test_config_from_env_all_fields(monkeypatch):
 
 def test_config_from_env_defaults(monkeypatch):
     """Test configuration with default values."""
+    # Ensure optional vars are not pre-set in the environment
+    monkeypatch.delenv("GROQ_MODEL_LLM", raising=False)
+    monkeypatch.delenv("AZURE_SPEECH_VOICE", raising=False)
+    monkeypatch.delenv("AZURE_SPEECH_OUTPUT_FORMAT", raising=False)
+
     monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
     monkeypatch.setenv("LIVEKIT_API_KEY", "test_key")
     monkeypatch.setenv("LIVEKIT_API_SECRET", "test_secret")
@@ -57,6 +62,13 @@ def test_config_from_env_defaults(monkeypatch):
 
 def test_config_missing_required_field(monkeypatch):
     """Test that missing required fields raise KeyError."""
+    # Ensure the required var is not already present in the environment
+    monkeypatch.delenv("LIVEKIT_API_KEY", raising=False)
+    monkeypatch.delenv("LIVEKIT_API_SECRET", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("AZURE_SPEECH_KEY", raising=False)
+    monkeypatch.delenv("AZURE_SPEECH_REGION", raising=False)
+
     monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
     # Missing LIVEKIT_API_KEY
     

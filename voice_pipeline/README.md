@@ -218,6 +218,23 @@ For outbound calls:
 
 See `control_plane/README.md` for call control.
 
+### Control Plane hangup (CP-03)
+
+For real telephony calls, ending only the agent session can leave the caller hearing silence.
+To hang up for all participants, start the Control Plane and set:
+
+```bash
+export CONTROL_PLANE_URL=http://127.0.0.1:8000
+```
+
+The voice pipeline will then call:
+
+```text
+POST /control/call/hangup  { "session_id": "<room_name>" }
+```
+
+LiveKit ends the call by deleting the room (telephony docs: hangup -> delete_room).
+
 ### Customization
 
 #### Change LLM instructions

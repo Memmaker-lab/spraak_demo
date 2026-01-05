@@ -99,6 +99,29 @@ De agent:
 - Ondersteunt barge-in
 - Voert silence handling uit (VC-02): “Momentje…” bij lange verwerking, en reprompt/close bij user-silence
 
+## Control Plane hangup (aanrader voor echte telefoon calls)
+
+Bij echte SIP calls wil je bij “ik hang op” ook echt de call beëindigen voor **alle deelnemers**.
+Daarvoor gebruikt de Control Plane de LiveKit `delete_room` API.
+
+### Start Control Plane
+
+```bash
+python -m control_plane
+```
+
+### Zet Control Plane URL voor de Voice Pipeline
+
+```bash
+export CONTROL_PLANE_URL=http://127.0.0.1:8000
+```
+
+Nu zal de Voice Pipeline bij de VC-02 close path een request doen naar:
+
+```text
+POST /control/call/hangup  { "session_id": "call-..." }
+```
+
 ## Silence handling (VC-02) tunen
 
 Je kunt de timers aanpassen via environment variables (milliseconden):

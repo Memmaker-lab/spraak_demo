@@ -9,9 +9,11 @@ from fastapi.responses import JSONResponse
 from .webhook_handler import webhook_handler
 from .config import config
 from logging_setup import get_logger, Component
+from .control_api import router as control_router
 
 app = FastAPI(title="Control Plane Webhook Server")
 logger = get_logger(Component.WEBHOOK_SERVER)
+app.include_router(control_router)
 
 
 @app.post("/webhook")

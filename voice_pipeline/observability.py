@@ -18,6 +18,7 @@ from typing import Any, Callable, Mapping, Optional, TYPE_CHECKING
 
 from logging_setup import get_logger, Component as LogComponent
 from observability.events import Component as ObsComponent, EventEmitter, Severity
+from .control_plane_client import request_hangup
 
 if TYPE_CHECKING:
     from livekit.agents import AgentSession
@@ -348,8 +349,10 @@ class VoicePipelineObserver:
                     correlation_id=self.current_turn_id or self.session_id,
                     reason="user_silence_timeout",
                 )
-                # Best-effort: disconnect agent session (call control is CP)
-                if self._session is not None:
+                # Best-effort: ask Control Plane to hang up for all participants (CP-03).
+                # If not configured/reachable, fall back to closing agent session.
+                cp_ok = await request_hangup(self.session_id)
+                if not cp_ok and self._session is not None:
                     try:
                         await self._session.aclose()
                     except Exception:
