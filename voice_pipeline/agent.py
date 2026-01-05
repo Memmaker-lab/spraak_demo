@@ -124,7 +124,7 @@ async def entrypoint(ctx: JobContext):
     
     # Start the session
     session_logger.info("Starting agent session")
-    await session.start(ctx.room, agent)
+    await session.start(room=ctx.room, agent=agent)
     
     # Greet the user (per VC-00: natural phone conversation)
     await session.say("Hallo, waarmee kan ik je helpen?", allow_interruptions=True)
