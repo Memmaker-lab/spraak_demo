@@ -2,11 +2,19 @@
 livekit-api>=0.11.0
 livekit-protocol>=0.11.0
 
-# Web framework for webhook server (optional - can use FastAPI, Flask, etc.)
+# LiveKit Agents Framework (Voice Pipeline)
+livekit-agents>=1.3.0
+
+# LiveKit Agents Plugins
+livekit-agents[groq]>=1.3.0  # Groq STT + LLM
+livekit-agents[azure]>=1.3.0  # Azure TTS
+livekit-agents[silero]>=1.3.0  # Silero VAD
+
+# Web framework for webhook server (Control Plane)
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 
-# For webhook verification (if not using livekit-server-sdk)
+# For webhook verification
 pyjwt>=2.8.0
 cryptography>=41.0.0
 
