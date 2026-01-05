@@ -7,22 +7,11 @@ Verifies:
 - Barge-in detection per VC-03
 - Session ID correlation
 """
+import asyncio
 import pytest
-from unittest.mock import Mock, MagicMock
-from io import StringIO
-import json
-import sys
+from unittest.mock import Mock
 
-from voice_pipeline.observability import VoicePipelineObserver
-
-
-@pytest.fixture
-def capture_events(monkeypatch):
-    """Capture emitted events to stdout."""
-    buffer = StringIO()
-    monkeypatch.setattr(sys, 'stdout', buffer)
-    yield buffer
-    monkeypatch.setattr(sys, 'stdout', sys.__stdout__)
+from voice_pipeline.observability import SilenceConfig, VoicePipelineObserver
 
 
 def test_observer_initialization():
@@ -88,7 +77,9 @@ def test_turn_started_on_speech_committed(capsys):
     
     # Check event was emitted
     captured = capsys.readouterr()
-    assert "turn.started" in captured.out
+    out = captured.out
+    assert "turn.started" in out
+    assert "llm.request" in out
     assert "sess_123" in captured.out
 
 
@@ -104,7 +95,9 @@ def test_tts_started_event(capsys):
     
     # Check event was emitted
     captured = capsys.readouterr()
-    assert "tts.started" in captured.out
+    out = captured.out
+    assert "llm.response" in out
+    assert "tts.started" in out
     assert "sess_123" in captured.out
 
 
@@ -113,7 +106,9 @@ def test_tts_stopped_event(capsys):
     observer = VoicePipelineObserver(session_id="sess_123")
     observer.tts_playing = True
     observer.current_turn_id = "turn_789"
-    
+
+    # simulate barge-in timing
+    observer._on_user_started_speaking({})
     event = {"reason": "barge_in"}
     observer._on_agent_stopped_speaking(event)
     
@@ -121,8 +116,10 @@ def test_tts_stopped_event(capsys):
     
     # Check event was emitted with cause
     captured = capsys.readouterr()
-    assert "tts.stopped" in captured.out
-    assert "barge_in" in captured.out
+    out = captured.out
+    assert "tts.stopped" in out
+    assert "barge_in" in out
+    assert "time_to_tts_stop_ms" in out
     assert "sess_123" in captured.out
 
 
@@ -149,4 +146,86 @@ def test_attach_to_session():
     assert mock_session.on.called
     # Should register multiple event types
     assert mock_session.on.call_count >= 5
+
+
+@pytest.mark.asyncio
+async def test_processing_delay_ack_emits_event_and_speaks(capsys):
+    """VC-02: processing delay acknowledgement after threshold."""
+    spoken: list[str] = []
+
+    class FakeSession:
+        def on(self, *_args, **_kwargs):
+            return None
+
+        async def say(self, text: str, **_kwargs):
+            spoken.append(text)
+
+        async def aclose(self):
+            return None
+
+    async def immediate_sleep(_sec: float):
+        return None
+
+    obs = VoicePipelineObserver(
+        session_id="sess_123",
+        sleep=immediate_sleep,
+        silence_cfg=SilenceConfig(
+            processing_delay_ack_ms=0,
+            user_silence_reprompt_ms=999999,
+            user_silence_close_ms=999999,
+        ),
+    )
+    obs.attach_to_session(FakeSession())
+    obs._new_turn()
+    obs._start_processing_timer()
+
+    # allow the created task to run
+    await asyncio.sleep(0)
+
+    out = capsys.readouterr().out
+    assert "silence.timer_fired" in out
+    assert "ux.delay_acknowledged" in out
+    assert spoken and "Momentje" in spoken[0]
+
+
+@pytest.mark.asyncio
+async def test_user_silence_reprompt_then_close_emits_call_ended(capsys):
+    """VC-02: bounded reprompt + graceful close path emits call.ended."""
+    spoken: list[str] = []
+    closed: list[bool] = []
+
+    class FakeSession:
+        def on(self, *_args, **_kwargs):
+            return None
+
+        async def say(self, text: str, **_kwargs):
+            spoken.append(text)
+
+        async def aclose(self):
+            closed.append(True)
+
+    async def immediate_sleep(_sec: float):
+        return None
+
+    obs = VoicePipelineObserver(
+        session_id="sess_123",
+        sleep=immediate_sleep,
+        silence_cfg=SilenceConfig(
+            processing_delay_ack_ms=999999,
+            user_silence_reprompt_ms=0,
+            user_silence_close_ms=1,
+        ),
+    )
+    obs.attach_to_session(FakeSession())
+    obs._user_state = "away"
+
+    obs._start_user_silence_timer()
+    await asyncio.sleep(0)
+
+    out = capsys.readouterr().out
+    assert "call.ended" in out
+    assert "user_silence_timeout" in out
+    assert any("Ben je er nog" in s for s in spoken)
+    assert any("Ik hang op" in s for s in spoken)
+    assert closed
 
