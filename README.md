@@ -19,6 +19,9 @@ Start here:
 Useful docs:
 - `STATUS.md` (current run-state snapshot; safe to paste into new chats)
 - `Architectural.md` (architecture/boundaries/decisions overview)
+- `DECISIONS.md` (ADR-lite decision log)
+- `RUNBOOK.md` (how to run services locally)
+- `TROUBLESHOOTING.md` (common issues and fixes)
 
 ## Key principles (summary)
 - **Verified-knowledge-only**: no assumptions. Use official docs, specs, or tests/experiments.
