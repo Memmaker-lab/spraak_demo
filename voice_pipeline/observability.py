@@ -269,7 +269,19 @@ class VoicePipelineObserver:
         text, lang = _parse_transcription_event(event, args, kwargs)
         text = (text or "").strip()
         self._record_user_activity()
+
+        # Emit STT metadata first (OBS-00: no content).
+        had_turn = self.current_turn_id is not None
         self._emit_stt_final(transcript_length=len(text), language=lang)
+
+        # Telephony safety net:
+        # Some transports don't reliably emit agent_state_changed("thinking").
+        # If we haven't started a turn yet, start one from the transcript so that:
+        # - VC-01 ordering is still observed (turn.started -> llm.request)
+        # - VC-02 processing timer can emit "Momentje..." if needed
+        if not had_turn:
+            self._emit_turn_started(transcript_length=len(text))
+            self._start_processing_timer()
 
     def _on_close(self, event: Any) -> None:
         self._cancel_processing_timer()
