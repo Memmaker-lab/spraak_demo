@@ -3,7 +3,11 @@
 
 # Load environment variables (skip comments and empty lines)
 set -a
-source <(grep -v '^#' .env_local | grep -v '^$' | grep '=' )
+if [ -f ".env_local" ]; then
+  source <(grep -v '^#' .env_local | grep -v '^$' | grep '=' )
+elif [ -f ".env.local" ]; then
+  source <(grep -v '^#' .env.local | grep -v '^$' | grep '=' )
+fi
 set +a
 
 # Start the agent in dev mode

@@ -12,6 +12,7 @@ import pytest
 from unittest.mock import Mock
 
 from voice_pipeline.observability import SilenceConfig, VoicePipelineObserver
+import voice_pipeline.observability as vp_obs
 
 
 def test_observer_initialization():
@@ -212,7 +213,7 @@ async def test_processing_delay_ack_emits_event_and_speaks(capsys):
 
 
 @pytest.mark.asyncio
-async def test_user_silence_reprompt_then_close_emits_call_ended(capsys):
+async def test_user_silence_reprompt_then_close_emits_call_ended(capsys, monkeypatch):
     """VC-02: bounded reprompt + graceful close path emits call.ended."""
     spoken: list[str] = []
     closed: list[bool] = []
@@ -229,6 +230,11 @@ async def test_user_silence_reprompt_then_close_emits_call_ended(capsys):
 
     async def immediate_sleep(_sec: float):
         return None
+
+    async def hangup_false(_session_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(vp_obs, "request_hangup", hangup_false)
 
     obs = VoicePipelineObserver(
         session_id="sess_123",
@@ -294,7 +300,7 @@ async def test_user_activity_cancels_user_silence_timer(capsys):
 
 
 @pytest.mark.asyncio
-async def test_close_without_reprompt_when_close_leq_reprompt(capsys):
+async def test_close_without_reprompt_when_close_leq_reprompt(capsys, monkeypatch):
     """If CLOSE_MS <= REPROMPT_MS we should close at CLOSE_MS without reprompt."""
     spoken: list[str] = []
     closed: list[bool] = []
@@ -311,6 +317,11 @@ async def test_close_without_reprompt_when_close_leq_reprompt(capsys):
 
     async def immediate_sleep(_sec: float):
         return None
+
+    async def hangup_false(_session_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(vp_obs, "request_hangup", hangup_false)
 
     obs = VoicePipelineObserver(
         session_id="sess_123",

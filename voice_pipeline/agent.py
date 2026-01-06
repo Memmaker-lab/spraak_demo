@@ -29,10 +29,13 @@ from .context import build_dispatch_context
 from .instructions import get_instructions
 from .observability import VoicePipelineObserver
 
-# Load environment variables from .env_local
-env_path = Path(__file__).parent.parent / ".env_local"
-if env_path.exists():
-    load_dotenv(env_path)
+# Load environment variables from .env_local / .env.local (local dev convenience).
+# Note: start scripts also export env vars; this is best-effort and will not override existing.
+root = Path(__file__).parent.parent
+for name in (".env_local", ".env.local"):
+    p = root / name
+    if p.exists():
+        load_dotenv(p, override=False)
 
 logger = get_logger(Component.VOICE_PIPELINE)
 
