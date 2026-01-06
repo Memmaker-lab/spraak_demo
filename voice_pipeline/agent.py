@@ -36,6 +36,9 @@ if env_path.exists():
 
 logger = get_logger(Component.VOICE_PIPELINE)
 
+# Prewarmed/shared instances (best-effort)
+_VAD = None
+
 
 async def entrypoint(ctx: JobContext):
     """
@@ -116,7 +119,7 @@ async def entrypoint(ctx: JobContext):
     )
     
     session_logger.debug("Configuring VAD", provider="silero")
-    vad = silero.VAD.load()
+    vad = _VAD or silero.VAD.load()
     
     # Create agent with instructions
     session_logger.info("Creating agent")
@@ -145,9 +148,26 @@ async def entrypoint(ctx: JobContext):
     await session.start(room=ctx.room, agent=agent)
     
     # Greet the user (per VC-00: natural phone conversation)
-    await session.say("Hallo, waarmee kan ik je helpen?", allow_interruptions=True)
+    try:
+        await session.say("Hallo, waarmee kan ik je helpen?", allow_interruptions=True)
+    except Exception as e:
+        # Best-effort: call may already be disconnected/cancelled.
+        session_logger.warning("Greeting not played", error=str(e), error_type=type(e).__name__)
     
     session_logger.info("Agent session started successfully")
+
+
+def prewarm(_process):
+    """
+    Prewarm heavy resources to reduce time-to-first-audio on inbound calls.
+
+    LiveKit Agents runs this once per worker process.
+    """
+    global _VAD
+    try:
+        _VAD = silero.VAD.load()
+    except Exception:
+        _VAD = None
 
 
 if __name__ == "__main__":
@@ -158,6 +178,7 @@ if __name__ == "__main__":
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
+            prewarm_fnc=prewarm,
             # For telephony dispatch rules that specify an agentName, this must match.
             # See LiveKit telephony docs: Agents telephony integration -> Agent dispatch.
             agent_name=os.getenv("LIVEKIT_AGENT_NAME", ""),
