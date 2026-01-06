@@ -238,9 +238,18 @@ class VoicePipelineObserver:
         if state:
             self._user_state = state
 
-    def _on_user_input_transcribed(self, event: Any) -> None:
-        text = _extract_text(event) or ""
-        lang = _extract_language(event)
+    def _on_user_input_transcribed(self, event: Any = None, *args: Any, **kwargs: Any) -> None:
+        """
+        LiveKit may call this handler with:
+        - a dict-like event
+        - positional args (e.g. text, language, ...)
+        - an object with attributes (text/transcript/language)
+        - keyword args
+
+        We only emit transcript metadata (length + language), never the content.
+        """
+        text, lang = _parse_transcription_event(event, args, kwargs)
+        text = (text or "").strip()
         self._emit_stt_final(transcript_length=len(text), language=lang)
 
     def _on_close(self, event: Any) -> None:
@@ -384,6 +393,16 @@ def _extract_text(event: Any) -> Optional[str]:
         text = event.get("text") or event.get("transcript") or event.get("user_transcript")
         if isinstance(text, str):
             return text
+    if isinstance(event, str):
+        return event
+    # best-effort: object with attributes
+    for attr in ("text", "transcript", "user_transcript"):
+        try:
+            val = getattr(event, attr)
+        except Exception:
+            val = None
+        if isinstance(val, str):
+            return val
     return None
 
 
@@ -392,5 +411,42 @@ def _extract_language(event: Any) -> Optional[str]:
         lang = event.get("language")
         if isinstance(lang, str):
             return lang
+    # best-effort: object with attributes
+    try:
+        lang = getattr(event, "language")
+    except Exception:
+        lang = None
+    if isinstance(lang, str):
+        return lang
     return None
+
+
+def _parse_transcription_event(
+    event: Any,
+    args: tuple[Any, ...],
+    kwargs: Mapping[str, Any],
+) -> tuple[Optional[str], Optional[str]]:
+    # Prefer kwargs if present
+    kw_text = kwargs.get("text") or kwargs.get("transcript") or kwargs.get("user_transcript")
+    text: Optional[str] = kw_text if isinstance(kw_text, str) else None
+    lang: Optional[str] = kwargs.get("language") if isinstance(kwargs.get("language"), str) else None
+
+    # If handler is invoked with extra positional args, they often carry (text, language, ...)
+    # Only override if we don't already have values.
+    if text is None and args:
+        if isinstance(args[0], str):
+            text = args[0]
+            if lang is None and len(args) >= 2 and isinstance(args[1], str):
+                lang = args[1]
+        else:
+            text = _extract_text(args[0]) or text
+            lang = _extract_language(args[0]) or lang
+
+    # Finally, inspect the primary event object.
+    if text is None and event is not None:
+        text = _extract_text(event) or text
+    if lang is None and event is not None:
+        lang = _extract_language(event) or lang
+
+    return text, lang
 

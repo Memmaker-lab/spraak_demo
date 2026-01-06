@@ -148,6 +148,29 @@ def test_attach_to_session():
     assert mock_session.on.call_count >= 5
 
 
+def test_user_input_transcribed_emits_stt_final_with_length_from_dict(capsys):
+    """OBS-00: stt.final should carry transcript_length and language (no content)."""
+    obs = VoicePipelineObserver(session_id="sess_123")
+    obs._on_user_input_transcribed({"user_transcript": " Goedemorgen.", "language": "nl"})
+
+    out = capsys.readouterr().out
+    assert "stt.final" in out
+    assert '"language": "nl"' in out
+    # we strip leading whitespace before counting
+    assert '"transcript_length": 12' in out
+
+
+def test_user_input_transcribed_emits_stt_final_with_length_from_args(capsys):
+    """LiveKit may call callbacks with positional args (text, language, ...)."""
+    obs = VoicePipelineObserver(session_id="sess_123")
+    obs._on_user_input_transcribed(None, " Hallo.", "nl")
+
+    out = capsys.readouterr().out
+    assert "stt.final" in out
+    assert '"language": "nl"' in out
+    assert '"transcript_length": 6' in out
+
+
 @pytest.mark.asyncio
 async def test_processing_delay_ack_emits_event_and_speaks(capsys):
     """VC-02: processing delay acknowledgement after threshold."""
