@@ -83,6 +83,7 @@ class VoicePipelineObserver:
         self._processing_timer: Optional[asyncio.Task] = None
         self._user_silence_timer: Optional[asyncio.Task] = None
         self._delay_ack_sent_for_turn: bool = False
+        self._last_agent_prompt_ts: Optional[float] = None  # When agent last prompted (for user-silence checks)
 
         self._session: Optional["AgentSession"] = None
 
@@ -114,6 +115,8 @@ class VoicePipelineObserver:
         may not always fire (or the greeting may fail). Calling this after a prompt
         ensures "Ben je er nog?" + graceful close still happen.
         """
+        # Record that agent just prompted (now), so user-silence timer checks from this point.
+        self._last_agent_prompt_ts = self._now()
         self._start_user_silence_timer()
 
     # --- Turn helpers ---
@@ -233,6 +236,8 @@ class VoicePipelineObserver:
             correlation_id=self.current_turn_id or self.session_id,
             **extra,
         )
+        # Record that agent just finished speaking (now), so user-silence timer checks from this point.
+        self._last_agent_prompt_ts = self._now()
         self._start_user_silence_timer()
 
     # --- Documented AgentSession events ---
@@ -326,8 +331,21 @@ class VoicePipelineObserver:
             if self._session is not None:
                 try:
                     await self._session.say("Momentje, ik denk even mee.", allow_interruptions=True)
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Don't crash; emit a structured hint so telephony playback issues are visible.
+                    self.emitter.emit(
+                        "ux.prompt_failed",
+                        session_id=self.session_id,
+                        severity=Severity.WARN,
+                        correlation_id=self.current_turn_id or self.session_id,
+                        message_key="delay_ack.thinking",
+                        error=str(e),
+                        error_type=type(e).__name__,
+                    )
+                finally:
+                    # VC-02: after we prompt (delay ack), user silence should follow the reprompt/close strategy.
+                    # In some telephony paths, TTS events don't reliably fire, so we arm explicitly here.
+                    self._start_user_silence_timer()
 
         # Only schedule when an event loop is running (tests may call sync handlers).
         try:
@@ -343,7 +361,8 @@ class VoicePipelineObserver:
 
     def _start_user_silence_timer(self) -> None:
         self._cancel_user_silence_timer()
-        started_at = self._now()
+        # Record when the agent last prompted (now), so we can check if user is silent since then.
+        self._last_agent_prompt_ts = self._now()
         started_turn = self.current_turn_id or self.session_id
         self.emitter.emit(
             "silence.timer_started",
@@ -360,12 +379,14 @@ class VoicePipelineObserver:
             # If CLOSE <= REPROMPT, skip reprompt and close at CLOSE_MS.
             if close_ms <= reprompt_ms:
                 await self._sleep(close_ms / 1000.0)
-                if self._is_user_silent_since(started_at):
+                # Check silence since the last agent prompt, not since timer start.
+                if self._last_agent_prompt_ts is not None and self._is_user_silent_since(self._last_agent_prompt_ts):
                     await self._close_due_to_user_silence(correlation_id=started_turn)
                 return
 
             await self._sleep(reprompt_ms / 1000.0)
-            if self._is_user_silent_since(started_at):
+            # Check silence since the last agent prompt, not since timer start.
+            if self._last_agent_prompt_ts is not None and self._is_user_silent_since(self._last_agent_prompt_ts):
                 self.emitter.emit(
                     "silence.timer_fired",
                     session_id=self.session_id,
@@ -377,6 +398,8 @@ class VoicePipelineObserver:
                 if self._session is not None:
                     try:
                         await self._session.say("Ben je er nog?", allow_interruptions=True)
+                        # After reprompt, update prompt timestamp so close timer checks from reprompt time.
+                        self._last_agent_prompt_ts = self._now()
                     except Exception:
                         pass
 
@@ -384,7 +407,8 @@ class VoicePipelineObserver:
             if remaining_ms <= 0:
                 return
             await self._sleep(remaining_ms / 1000.0)
-            if self._is_user_silent_since(started_at):
+            # Check silence since the last prompt (greeting or reprompt), not since timer start.
+            if self._last_agent_prompt_ts is not None and self._is_user_silent_since(self._last_agent_prompt_ts):
                 await self._close_due_to_user_silence(correlation_id=started_turn)
 
         # Only schedule when an event loop is running (tests may call sync handlers).
