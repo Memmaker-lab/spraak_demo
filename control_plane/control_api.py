@@ -77,6 +77,7 @@ async def hangup_call(req: HangupRequest) -> HangupResponse:
         command="call.hangup",
     )
 
+    start_ts = time.time()
     try:
         await _delete_room(req.session_id)
     except Exception as e:
@@ -92,6 +93,7 @@ async def hangup_call(req: HangupRequest) -> HangupResponse:
         )
         raise HTTPException(status_code=502, detail="hangup_failed")
 
+    latency_ms = int((time.time() - start_ts) * 1000)
     emitter.emit(
         "control.command_applied",
         session_id=req.session_id,
@@ -99,6 +101,7 @@ async def hangup_call(req: HangupRequest) -> HangupResponse:
         correlation_id=correlation_id,
         command="call.hangup",
         result="ok",
+        latency_ms=latency_ms,
     )
 
     return HangupResponse(status="ok")

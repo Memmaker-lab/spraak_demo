@@ -70,6 +70,7 @@ class VoicePipelineObserver:
         self.user_last_audio_ts: Optional[float] = None
         self._last_user_activity_ts: Optional[float] = None
         self._stt_final_emitted_for_turn: bool = False
+        self._llm_request_ts: Optional[float] = None
 
         # State tracking (documented events)
         self._agent_state: Optional[str] = None
@@ -78,6 +79,7 @@ class VoicePipelineObserver:
         # Playback tracking
         self.tts_playing: bool = False
         self._barge_in_detected_ts: Optional[float] = None
+        self._tts_started_ts: Optional[float] = None
 
         # Silence timers
         self._processing_timer: Optional[asyncio.Task] = None
@@ -143,6 +145,7 @@ class VoicePipelineObserver:
         )
 
         # VC-01: turn.started MUST precede llm.request
+        self._llm_request_ts = self._now()
         self.emitter.emit(
             "llm.request",
             session_id=self.session_id,
@@ -152,25 +155,41 @@ class VoicePipelineObserver:
 
     def _emit_llm_response(self) -> None:
         turn_id = self.current_turn_id or self._new_turn()
+        extra: dict[str, Any] = {}
+        if self._llm_request_ts is not None:
+            extra["latency_ms"] = int((self._now() - self._llm_request_ts) * 1000)
+            self._llm_request_ts = None
         self.emitter.emit(
             "llm.response",
             session_id=self.session_id,
             severity=Severity.INFO,
             correlation_id=turn_id,
+            **extra,
         )
 
-    def _emit_stt_final(self, *, transcript_length: int, language: Optional[str]) -> None:
+    def _emit_stt_final(
+        self,
+        *,
+        transcript_length: int,
+        language: Optional[str],
+        latency_ms: Optional[int] = None,
+    ) -> None:
         turn_id = self.current_turn_id or self._new_turn()
         if self._stt_final_emitted_for_turn:
             return
         self._stt_final_emitted_for_turn = True
+        payload: dict[str, Any] = {
+            "transcript_length": transcript_length,
+            "language": language,
+        }
+        if latency_ms is not None:
+            payload["latency_ms"] = latency_ms
         self.emitter.emit(
             "stt.final",
             session_id=self.session_id,
             severity=Severity.INFO,
             correlation_id=turn_id,
-            transcript_length=transcript_length,
-            language=language,
+            **payload,
         )
 
     # --- Backward-compatible event handlers ---
@@ -215,6 +234,7 @@ class VoicePipelineObserver:
         self.tts_playing = True
         self._emit_llm_response()
         self._cancel_processing_timer()
+        self._tts_started_ts = self._now()
         self.emitter.emit(
             "tts.started",
             session_id=self.session_id,
@@ -229,6 +249,9 @@ class VoicePipelineObserver:
         if cause == "barge_in" and self._barge_in_detected_ts is not None:
             extra["time_to_tts_stop_ms"] = int((self._now() - self._barge_in_detected_ts) * 1000)
             self._barge_in_detected_ts = None
+        if self._tts_started_ts is not None:
+            extra["latency_ms"] = int((self._now() - self._tts_started_ts) * 1000)
+            self._tts_started_ts = None
         self.emitter.emit(
             "tts.stopped",
             session_id=self.session_id,
@@ -271,13 +294,13 @@ class VoicePipelineObserver:
 
         We only emit transcript metadata (length + language), never the content.
         """
-        text, lang = _parse_transcription_event(event, args, kwargs)
+        text, lang, delay_ms = _parse_transcription_event(event, args, kwargs)
         text = (text or "").strip()
         self._record_user_activity()
 
         # Emit STT metadata first (OBS-00: no content).
         had_turn = self.current_turn_id is not None
-        self._emit_stt_final(transcript_length=len(text), language=lang)
+        self._emit_stt_final(transcript_length=len(text), language=lang, latency_ms=delay_ms)
 
         # Telephony safety net:
         # Some transports don't reliably emit agent_state_changed("thinking").
@@ -508,11 +531,12 @@ def _parse_transcription_event(
     event: Any,
     args: tuple[Any, ...],
     kwargs: Mapping[str, Any],
-) -> tuple[Optional[str], Optional[str]]:
+) -> tuple[Optional[str], Optional[str], Optional[int]]:
     # Prefer kwargs if present
     kw_text = kwargs.get("text") or kwargs.get("transcript") or kwargs.get("user_transcript")
     text: Optional[str] = kw_text if isinstance(kw_text, str) else None
     lang: Optional[str] = kwargs.get("language") if isinstance(kwargs.get("language"), str) else None
+    delay_ms: Optional[int] = None
 
     # If handler is invoked with extra positional args, they often carry (text, language, ...)
     # Only override if we don't already have values.
@@ -526,10 +550,16 @@ def _parse_transcription_event(
             lang = _extract_language(args[0]) or lang
 
     # Finally, inspect the primary event object.
-    if text is None and event is not None:
-        text = _extract_text(event) or text
-    if lang is None and event is not None:
-        lang = _extract_language(event) or lang
+    if event is not None:
+        if text is None:
+            text = _extract_text(event) or text
+        if lang is None:
+            lang = _extract_language(event) or lang
+        # transcript_delay is reported in seconds by LiveKit; convert to ms if present
+        if isinstance(event, dict):
+            td = event.get("transcript_delay")
+            if isinstance(td, (int, float)):
+                delay_ms = int(td * 1000)
 
-    return text, lang
+    return text, lang, delay_ms
 

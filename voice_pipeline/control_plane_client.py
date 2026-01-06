@@ -9,9 +9,15 @@ telephony control actions (CP-03).
 from __future__ import annotations
 
 import os
+import time
 from typing import Optional
 
 import aiohttp
+
+from logging_setup import get_logger, Component as LogComponent
+
+
+logger = get_logger(LogComponent.VOICE_PIPELINE)
 
 
 def get_control_plane_base_url() -> Optional[str]:
@@ -20,6 +26,7 @@ def get_control_plane_base_url() -> Optional[str]:
     """
     url = os.getenv("CONTROL_PLANE_URL")
     if not url:
+        logger.warning("CONTROL_PLANE_URL not set; skipping Control Plane hangup request")
         return None
     return url.rstrip("/")
 
@@ -35,11 +42,34 @@ async def request_hangup(session_id: str) -> bool:
         return False
 
     endpoint = f"{base}/control/call/hangup"
+    start_ts = time.time()
+    logger.info(
+        "Requesting Control Plane hangup",
+        endpoint=endpoint,
+        session_id=session_id,
+    )
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(endpoint, json={"session_id": session_id}, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                return 200 <= resp.status < 300
-    except Exception:
+                ok = 200 <= resp.status < 300
+                logger.info(
+                    "Control Plane hangup response",
+                    endpoint=endpoint,
+                    session_id=session_id,
+                    status=resp.status,
+                    ok=ok,
+                    latency_ms=int((time.time() - start_ts) * 1000),
+                )
+                return ok
+    except Exception as e:
+        logger.warning(
+            "Control Plane hangup request failed",
+            endpoint=endpoint,
+            session_id=session_id,
+            error=str(e),
+            error_type=type(e).__name__,
+            latency_ms=int((time.time() - start_ts) * 1000),
+        )
         return False
 
 

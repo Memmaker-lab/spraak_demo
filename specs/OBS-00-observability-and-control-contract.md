@@ -1,7 +1,7 @@
 # SPEC OBS-00 — Observability & Control Contract
 
 ID: OBS-00
-VERSION: 1.1
+VERSION: 1.2
 STATUS: ENFORCED
 APPLIES_TO: demo, production
 
@@ -79,6 +79,61 @@ All logs MUST be JSON events.
 ### 3.8 Control surface (auditable)
 - control.command_received { command }
 - control.command_applied { command, result? }
+
+### 3.9 Call timeline & latency (extended)
+
+To support a full per-call timeline in a future UI, the following MUST hold:
+
+1. **Cross-component correlation**
+   - All events MUST use a `session_id` that is identical between Control Plane and Voice Pipeline for the same call.
+   - Within a call, `correlation_id` MUST be used to group:
+     - turns (Voice Pipeline): one `correlation_id` per user→agent turn.
+     - commands (Control Plane): one `correlation_id` per control action (e.g. hangup).
+
+2. **Latency measurement (RECOMMENDED, MAY become ENFORCED)**
+   - Where available, the following events SHOULD include `latency_ms` (numeric, milliseconds):
+     - `stt.final` — STT processing latency for the committed transcript.
+     - `llm.response` — model inference/planning latency per turn.
+     - `tts.stopped` — TTS synth+playback duration for the agent response.
+     - `provider.rate_limited` / `provider.retry_scheduled` — wait/backoff durations.
+     - `control.command_applied` — end-to-end duration of the control action (e.g. hangup).
+   - Absence of `latency_ms` does not break compatibility, but does limit the usefulness of per-call timeline UIs.
+
+3. **Minimal cross-component timeline (per session_id)**
+   - Across all components combined, a call timeline MUST at least be reconstructible from:
+     - Call lifecycle (Control Plane):
+       - `call.started { direction }`
+       - `call.answered`
+       - `call.ended { reason }`
+       - `session.state_changed { from, to }`
+     - LiveKit lifecycle (Control Plane):
+       - `livekit.room.created`
+       - `livekit.participant.joined`
+       - `livekit.participant.left`
+       - `livekit.track.published` / `livekit.track.unpublished`
+     - Voice turns (Voice Pipeline):
+       - `turn.started { user_last_audio_ts_ms? }`
+       - `stt.final { transcript_length, language, latency_ms? }`
+       - `llm.request`
+       - `llm.response { latency_ms? }`
+       - `tts.started`
+       - `tts.stopped { cause, latency_ms? }`
+       - `barge_in.detected`
+     - Silence handling (Voice Pipeline, VC-02):
+       - `silence.timer_started { kind, threshold_ms }`
+       - `silence.timer_fired { kind, threshold_ms }`
+       - `ux.delay_acknowledged { message_key }`
+       - `call.ended { reason: "user_silence_timeout" }`
+     - Control actions (Control Plane, CP-03):
+       - `control.command_received { command }`
+       - `control.command_applied { command, result, latency_ms? }`
+
+4. **Queryability for UI**
+   - The system MUST expose a way (e.g. via CP-03 Control API) to:
+     - fetch all events for a given `session_id`,
+     - optionally filtered by `event_type`, `component`, `since`, `until`,
+     - ordered by timestamp (oldest first).
+   - This interface MUST be sufficient for a UI to render a complete per-call timeline with timestamps (`ts`) and, where present, `latency_ms`.
 
 ## 4. Privacy rules for events
 - PII logging is allowed for audit/ops, but MUST be intentional:
