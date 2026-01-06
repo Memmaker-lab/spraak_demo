@@ -68,6 +68,7 @@ class VoicePipelineObserver:
         # Turn tracking
         self.current_turn_id: Optional[str] = None
         self.user_last_audio_ts: Optional[float] = None
+        self._last_user_activity_ts: Optional[float] = None
         self._stt_final_emitted_for_turn: bool = False
 
         # State tracking (documented events)
@@ -171,6 +172,7 @@ class VoicePipelineObserver:
         )
 
     def _on_user_started_speaking(self, event: dict[str, Any]):
+        self._record_user_activity()
         # VC-03 barge-in: user starts speaking during TTS
         if self.tts_playing:
             self._barge_in_detected_ts = self._now()
@@ -185,11 +187,13 @@ class VoicePipelineObserver:
         self._cancel_user_silence_timer()
 
     def _on_user_stopped_speaking(self, event: dict[str, Any]):
+        self._record_user_activity()
         self.user_last_audio_ts = self._now()
 
     def _on_user_speech_committed(self, event: dict[str, Any]):
         transcript = event.get("text", "")
         self._new_turn()
+        self._record_user_activity()
         self._emit_stt_final(transcript_length=len(transcript), language=None)
         self._emit_turn_started(transcript_length=len(transcript))
         self._start_processing_timer()
@@ -237,6 +241,10 @@ class VoicePipelineObserver:
         state = _extract_state(event)
         if state:
             self._user_state = state
+            # If the SDK provides a "speaking" state, treat it as user activity and cancel
+            # any user-silence timers.
+            if state == "speaking":
+                self._record_user_activity()
 
     def _on_user_input_transcribed(self, event: Any = None, *args: Any, **kwargs: Any) -> None:
         """
@@ -250,6 +258,7 @@ class VoicePipelineObserver:
         """
         text, lang = _parse_transcription_event(event, args, kwargs)
         text = (text or "").strip()
+        self._record_user_activity()
         self._emit_stt_final(transcript_length=len(text), language=lang)
 
     def _on_close(self, event: Any) -> None:
@@ -312,25 +321,36 @@ class VoicePipelineObserver:
 
     def _start_user_silence_timer(self) -> None:
         self._cancel_user_silence_timer()
+        started_at = self._now()
+        started_turn = self.current_turn_id or self.session_id
         self.emitter.emit(
             "silence.timer_started",
             session_id=self.session_id,
             severity=Severity.DEBUG,
-            correlation_id=self.current_turn_id or self.session_id,
+            correlation_id=started_turn,
             kind="user",
         )
 
         async def _timer():
-            await self._sleep(self._silence.user_silence_reprompt_ms / 1000.0)
-            # If user hasn't started speaking (best-effort using state)
-            if self._user_state in (None, "listening", "away"):
+            reprompt_ms = int(self._silence.user_silence_reprompt_ms)
+            close_ms = int(self._silence.user_silence_close_ms)
+
+            # If CLOSE <= REPROMPT, skip reprompt and close at CLOSE_MS.
+            if close_ms <= reprompt_ms:
+                await self._sleep(close_ms / 1000.0)
+                if self._is_user_silent_since(started_at):
+                    await self._close_due_to_user_silence(correlation_id=started_turn)
+                return
+
+            await self._sleep(reprompt_ms / 1000.0)
+            if self._is_user_silent_since(started_at):
                 self.emitter.emit(
                     "silence.timer_fired",
                     session_id=self.session_id,
                     severity=Severity.INFO,
-                    correlation_id=self.current_turn_id or self.session_id,
+                    correlation_id=started_turn,
                     kind="user",
-                    threshold_ms=self._silence.user_silence_reprompt_ms,
+                    threshold_ms=reprompt_ms,
                 )
                 if self._session is not None:
                     try:
@@ -338,34 +358,12 @@ class VoicePipelineObserver:
                     except Exception:
                         pass
 
-            remaining_ms = self._silence.user_silence_close_ms - self._silence.user_silence_reprompt_ms
+            remaining_ms = close_ms - reprompt_ms
             if remaining_ms <= 0:
                 return
             await self._sleep(remaining_ms / 1000.0)
-            if self._user_state in (None, "listening", "away"):
-                if self._session is not None:
-                    try:
-                        await self._session.say(
-                            "Oké, ik hoor even niks. Ik hang op. Fijne dag!",
-                            allow_interruptions=True,
-                        )
-                    except Exception:
-                        pass
-                self.emitter.emit(
-                    "call.ended",
-                    session_id=self.session_id,
-                    severity=Severity.INFO,
-                    correlation_id=self.current_turn_id or self.session_id,
-                    reason="user_silence_timeout",
-                )
-                # Best-effort: ask Control Plane to hang up for all participants (CP-03).
-                # If not configured/reachable, fall back to closing agent session.
-                cp_ok = await request_hangup(self.session_id)
-                if not cp_ok and self._session is not None:
-                    try:
-                        await self._session.aclose()
-                    except Exception:
-                        pass
+            if self._is_user_silent_since(started_at):
+                await self._close_due_to_user_silence(correlation_id=started_turn)
 
         # Only schedule when an event loop is running (tests may call sync handlers).
         try:
@@ -378,6 +376,45 @@ class VoicePipelineObserver:
         if self._user_silence_timer is not None:
             self._user_silence_timer.cancel()
             self._user_silence_timer = None
+
+    def _record_user_activity(self) -> None:
+        """Best-effort signal that the user is active; cancels user-silence timers."""
+        now = self._now()
+        self._last_user_activity_ts = now
+        self._cancel_user_silence_timer()
+
+    def _is_user_silent_since(self, since_ts: float) -> bool:
+        """
+        True if we have not observed user activity (speech/transcript) since `since_ts`.
+        This avoids relying on SDK-specific user_state names.
+        """
+        if self._last_user_activity_ts is None:
+            return True
+        return self._last_user_activity_ts <= since_ts
+
+    async def _close_due_to_user_silence(self, *, correlation_id: str) -> None:
+        """VC-02: bounded reprompt + graceful close with best-effort Control Plane hangup."""
+        if self._session is not None:
+            try:
+                await self._session.say(
+                    "Oké, ik hoor even niks. Ik hang op. Fijne dag!",
+                    allow_interruptions=True,
+                )
+            except Exception:
+                pass
+        self.emitter.emit(
+            "call.ended",
+            session_id=self.session_id,
+            severity=Severity.INFO,
+            correlation_id=correlation_id,
+            reason="user_silence_timeout",
+        )
+        cp_ok = await request_hangup(self.session_id)
+        if not cp_ok and self._session is not None:
+            try:
+                await self._session.aclose()
+            except Exception:
+                pass
 
 
 def _extract_state(event: Any) -> Optional[str]:

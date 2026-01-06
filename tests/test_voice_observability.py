@@ -240,7 +240,6 @@ async def test_user_silence_reprompt_then_close_emits_call_ended(capsys):
         ),
     )
     obs.attach_to_session(FakeSession())
-    obs._user_state = "away"
 
     obs._start_user_silence_timer()
     await asyncio.sleep(0)
@@ -249,6 +248,87 @@ async def test_user_silence_reprompt_then_close_emits_call_ended(capsys):
     assert "call.ended" in out
     assert "user_silence_timeout" in out
     assert any("Ben je er nog" in s for s in spoken)
+    assert any("Ik hang op" in s for s in spoken)
+    assert closed
+
+
+@pytest.mark.asyncio
+async def test_user_activity_cancels_user_silence_timer(capsys):
+    """If user speaks/transcribes, user-silence timer should not reprompt/close."""
+    spoken: list[str] = []
+
+    class FakeSession:
+        def on(self, *_args, **_kwargs):
+            return None
+
+        async def say(self, text: str, **_kwargs):
+            spoken.append(text)
+
+        async def aclose(self):
+            return None
+
+    async def yield_sleep(_sec: float):
+        await asyncio.sleep(0)
+
+    obs = VoicePipelineObserver(
+        session_id="sess_123",
+        sleep=yield_sleep,
+        silence_cfg=SilenceConfig(
+            processing_delay_ack_ms=999999,
+            user_silence_reprompt_ms=0,
+            user_silence_close_ms=1,
+        ),
+    )
+    obs.attach_to_session(FakeSession())
+    obs._start_user_silence_timer()
+
+    # Signal user activity immediately (transcript event)
+    obs._on_user_input_transcribed({"user_transcript": "Hoi", "language": "nl"})
+
+    # allow tasks to run
+    await asyncio.sleep(0)
+    out = capsys.readouterr().out
+    assert "call.ended" not in out
+    assert not any("Ben je er nog" in s for s in spoken)
+    assert not any("Ik hang op" in s for s in spoken)
+
+
+@pytest.mark.asyncio
+async def test_close_without_reprompt_when_close_leq_reprompt(capsys):
+    """If CLOSE_MS <= REPROMPT_MS we should close at CLOSE_MS without reprompt."""
+    spoken: list[str] = []
+    closed: list[bool] = []
+
+    class FakeSession:
+        def on(self, *_args, **_kwargs):
+            return None
+
+        async def say(self, text: str, **_kwargs):
+            spoken.append(text)
+
+        async def aclose(self):
+            closed.append(True)
+
+    async def immediate_sleep(_sec: float):
+        return None
+
+    obs = VoicePipelineObserver(
+        session_id="sess_123",
+        sleep=immediate_sleep,
+        silence_cfg=SilenceConfig(
+            processing_delay_ack_ms=999999,
+            user_silence_reprompt_ms=7000,
+            user_silence_close_ms=1000,
+        ),
+    )
+    obs.attach_to_session(FakeSession())
+    obs._start_user_silence_timer()
+    await asyncio.sleep(0)
+
+    out = capsys.readouterr().out
+    assert "call.ended" in out
+    assert "user_silence_timeout" in out
+    assert not any("Ben je er nog" in s for s in spoken)
     assert any("Ik hang op" in s for s in spoken)
     assert closed
 
