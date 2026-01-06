@@ -213,6 +213,56 @@ async def test_processing_delay_ack_emits_event_and_speaks(capsys):
 
 
 @pytest.mark.asyncio
+async def test_processing_delay_ack_arms_user_silence_timer_then_reprompt_and_close(capsys, monkeypatch):
+    """VC-02: after delay ack prompt, user silence strategy should still kick in (telephony safety net)."""
+    spoken: list[str] = []
+    closed: list[bool] = []
+
+    class FakeSession:
+        def on(self, *_args, **_kwargs):
+            return None
+
+        async def say(self, text: str, **_kwargs):
+            spoken.append(text)
+
+        async def aclose(self):
+            closed.append(True)
+
+    async def immediate_sleep(_sec: float):
+        return None
+
+    async def hangup_false(_session_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(vp_obs, "request_hangup", hangup_false)
+
+    obs = VoicePipelineObserver(
+        session_id="sess_123",
+        sleep=immediate_sleep,
+        silence_cfg=SilenceConfig(
+            processing_delay_ack_ms=0,
+            user_silence_reprompt_ms=0,
+            user_silence_close_ms=1,
+        ),
+    )
+    obs.attach_to_session(FakeSession())
+    obs._new_turn()
+    obs._start_processing_timer()
+
+    # First tick runs the processing timer; second tick runs the nested user-silence timer.
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    out = capsys.readouterr().out
+    assert "ux.delay_acknowledged" in out
+    assert any("Momentje" in s for s in spoken)
+    assert any("Ben je er nog" in s for s in spoken)
+    assert any("Ik hang op" in s for s in spoken)
+    assert "call.ended" in out
+    assert closed
+
+
+@pytest.mark.asyncio
 async def test_user_silence_reprompt_then_close_emits_call_ended(capsys, monkeypatch):
     """VC-02: bounded reprompt + graceful close path emits call.ended."""
     spoken: list[str] = []
