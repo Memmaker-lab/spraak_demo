@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Optional
 
+from .event_store import event_store
+
 
 class Component(str, Enum):
     """Component types per OBS-00."""
@@ -63,8 +65,12 @@ class EventEmitter:
 
         event.update(kwargs)
 
+        # Emit to stdout (for log aggregation)
         json.dump(event, sys.stdout, ensure_ascii=False)
         sys.stdout.write("\n")
         sys.stdout.flush()
+        
+        # Store in event store (for CP-03 read API)
+        event_store.store(event)
 
 
