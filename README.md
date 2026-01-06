@@ -16,6 +16,10 @@ Start here:
 - `specs/NFR-00-non-functional-requirements.md`
 - `specs/OBS-00-observability-and-control-contract.md`
 
+Useful docs:
+- `STATUS.md` (current run-state snapshot; safe to paste into new chats)
+- `Architectural.md` (architecture/boundaries/decisions overview)
+
 ## Key principles (summary)
 - **Verified-knowledge-only**: no assumptions. Use official docs, specs, or tests/experiments.
 - **Security & privacy by design**: minimize PII, treat external providers as untrusted boundaries.
