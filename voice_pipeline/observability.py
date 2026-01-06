@@ -106,6 +106,16 @@ class VoicePipelineObserver:
 
         self.logger.info("Observability hooks attached")
 
+    def arm_user_silence_timer(self) -> None:
+        """
+        Arm the VC-02 user-silence timer after a prompt.
+
+        We normally arm this on `agent_stopped_speaking`, but telephony TTS events
+        may not always fire (or the greeting may fail). Calling this after a prompt
+        ensures "Ben je er nog?" + graceful close still happen.
+        """
+        self._start_user_silence_timer()
+
     # --- Turn helpers ---
 
     def _new_turn(self) -> str:

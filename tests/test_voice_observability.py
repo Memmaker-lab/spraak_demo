@@ -343,3 +343,47 @@ async def test_close_without_reprompt_when_close_leq_reprompt(capsys, monkeypatc
     assert any("Ik hang op" in s for s in spoken)
     assert closed
 
+
+@pytest.mark.asyncio
+async def test_arm_user_silence_timer_triggers_reprompt_and_close(capsys, monkeypatch):
+    """Arming the user-silence timer directly should still reprompt + close (telephony safety net)."""
+    spoken: list[str] = []
+    closed: list[bool] = []
+
+    class FakeSession:
+        def on(self, *_args, **_kwargs):
+            return None
+
+        async def say(self, text: str, **_kwargs):
+            spoken.append(text)
+
+        async def aclose(self):
+            closed.append(True)
+
+    async def immediate_sleep(_sec: float):
+        return None
+
+    async def hangup_false(_session_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(vp_obs, "request_hangup", hangup_false)
+
+    obs = VoicePipelineObserver(
+        session_id="sess_123",
+        sleep=immediate_sleep,
+        silence_cfg=SilenceConfig(
+            processing_delay_ack_ms=999999,
+            user_silence_reprompt_ms=0,
+            user_silence_close_ms=1,
+        ),
+    )
+    obs.attach_to_session(FakeSession())
+    obs.arm_user_silence_timer()
+    await asyncio.sleep(0)
+
+    out = capsys.readouterr().out
+    assert "call.ended" in out
+    assert any("Ben je er nog" in s for s in spoken)
+    assert any("Ik hang op" in s for s in spoken)
+    assert closed
+

@@ -156,6 +156,10 @@ async def entrypoint(ctx: JobContext):
     except Exception as e:
         # Best-effort: call may already be disconnected/cancelled.
         session_logger.warning("Greeting not played", error=str(e), error_type=type(e).__name__)
+    finally:
+        # VC-02: user silence after a prompt should trigger reprompt + graceful close.
+        # In telephony, TTS events may not always fire; arm explicitly after greeting.
+        observer.arm_user_silence_timer()
     
     session_logger.info("Agent session started successfully")
 
