@@ -2,6 +2,32 @@
 
 Test de Control API zonder web UI te bouwen. Meerdere opties beschikbaar.
 
+## CORS Configuration (voor Web Apps)
+
+De API ondersteunt CORS voor cross-origin requests vanuit web apps. Configureer via environment variables:
+
+### Development (alle origins toegestaan)
+```bash
+# In .env_local of environment
+CORS_ALLOW_ALL=true
+```
+
+### Production (specifieke origins)
+```bash
+# In .env_local of environment
+CORS_ORIGINS=http://localhost:3000,http://localhost:5173,https://mijnapp.nl
+```
+
+**Defaults:**
+- Als `CORS_ALLOW_ALL` niet is ingesteld: alleen `http://localhost:3000` en `http://localhost:5173` zijn toegestaan
+- Als `CORS_ALLOW_ALL=true`: alle origins zijn toegestaan (alleen voor development!)
+
+**Voorbeeld voor React/Vue/Next.js app:**
+```bash
+# .env_local
+CORS_ORIGINS=http://localhost:3000,http://localhost:5173,https://mijnapp.nl
+```
+
 ## Optie 1: FastAPI Swagger UI (Aanbevolen)
 
 FastAPI genereert automatisch interactieve API documentatie:

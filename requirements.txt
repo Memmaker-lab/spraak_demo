@@ -3,12 +3,13 @@ livekit-api>=0.11.0
 livekit-protocol>=0.11.0
 
 # LiveKit Agents Framework (Voice Pipeline)
-livekit-agents>=1.3.0
+livekit-agents>=1.3.10
 
 # LiveKit Agents Plugins
-livekit-agents[groq]>=1.3.0  # Groq STT + LLM
-livekit-agents[azure]>=1.3.0  # Azure TTS
-livekit-agents[silero]>=1.3.0  # Silero VAD
+livekit-agents[groq]>=1.3.0      # Groq STT + LLM
+livekit-agents[azure]>=1.3.0     # Azure TTS
+livekit-agents[silero]>=1.3.0    # Silero VAD
+livekit-agents[google]>=1.3.0    # Google Cloud TTS / STT plugins
 
 # Web framework for webhook server (Control Plane)
 fastapi>=0.104.0
@@ -21,8 +22,13 @@ cryptography>=41.0.0
 # Environment variables
 python-dotenv>=1.0.0
 
+# HTTP client for Google Cloud TTS REST API
+aiohttp>=3.9.0
+
 # Testing
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
 pytest-cov>=4.1.0
 
+# YAML support for scenario configs
+PyYAML>=6.0.0

@@ -15,6 +15,7 @@ Features:
 
 import json
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from enum import Enum
@@ -54,7 +55,13 @@ class JSONFormatter(logging.Formatter):
     - Component identifier
     - Session ID (if available in extra)
     - Message and additional fields
+    
+    Latency values (latency_ms) are highlighted in orange in console output.
     """
+    
+    # ANSI color codes
+    ORANGE = '\033[38;5;208m'  # Bright orange (256-color mode)
+    RESET = '\033[0m'
     
     def format(self, record: logging.LogRecord) -> str:
         log_data = {
@@ -69,6 +76,7 @@ class JSONFormatter(logging.Formatter):
             log_data["session_id"] = record.session_id
         
         # Add any extra fields from the record
+        latency_ms = None
         for key, value in record.__dict__.items():
             if key not in [
                 "name", "msg", "args", "created", "filename", "funcName",
@@ -78,12 +86,54 @@ class JSONFormatter(logging.Formatter):
                 "component", "session_id", "message"
             ]:
                 log_data[key] = value
+                if key == "latency_ms":
+                    latency_ms = value
         
         # Add exception info if present
         if record.exc_info:
             log_data["exception"] = self.formatException(record.exc_info)
         
-        return json.dumps(log_data, ensure_ascii=False)
+        # If latency_ms is present, format it with "ms" unit
+        # We'll add color after JSON serialization to keep JSON valid
+        if latency_ms is not None:
+            # Store original value, we'll format it in the output
+            original_latency = latency_ms
+            # Keep numeric value in JSON for parsing compatibility
+            log_data["latency_ms"] = latency_ms
+        
+        # Generate JSON output
+        json_output = json.dumps(log_data, ensure_ascii=False)
+        
+        # Post-process JSON to add "ms" unit and color for latency_ms
+        if latency_ms is not None:
+            import re
+            # Match "latency_ms": <number> (with optional whitespace)
+            # We need to match the number and replace it with colored version + "ms"
+            pattern = r'("latency_ms"\s*:\s*)(\d+)'
+            
+            # Check if stdout is a TTY (terminal) for color support
+            # Also check environment variable to force colors
+            try:
+                is_tty = sys.stdout.isatty()
+            except (AttributeError, OSError):
+                is_tty = False
+            
+            # Apply colors by default for console output
+            # Can be disabled with NO_COLOR=1 or forced with FORCE_COLOR=1
+            force_color = os.environ.get('FORCE_COLOR', '').lower() in ('1', 'true', 'yes')
+            no_color = os.environ.get('NO_COLOR', '').lower() in ('1', 'true', 'yes')
+            # Default to True (use color) unless NO_COLOR is set or we're definitely not a TTY
+            use_color = (is_tty or force_color or True) and not no_color
+            
+            if use_color:
+                # Replace with orange-colored value + "ms"
+                replacement = rf'\1{self.ORANGE}\2 ms{self.RESET}'
+            else:
+                # Just add "ms" without color
+                replacement = r'\1\2 ms'
+            json_output = re.sub(pattern, replacement, json_output)
+        
+        return json_output
 
 
 class StructuredLogger:
@@ -160,6 +210,17 @@ class StructuredLogger:
     def critical(self, message: str, **kwargs):
         """Log a critical message."""
         self._log(logging.CRITICAL, message, **kwargs)
+
+    def exception(self, message: str, **kwargs):
+        """
+        Log an error message with exception info.
+
+        This mirrors logging.Logger.exception so that external code (e.g. LiveKit)
+        can safely call logger.exception(...) on this wrapper.
+        """
+        # Ensure exc_info is True unless explicitly overridden
+        kwargs.setdefault("exc_info", True)
+        self._log(logging.ERROR, message, **kwargs)
     
     def debug_pii(self, message: str, **pii_fields):
         """

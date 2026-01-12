@@ -26,8 +26,9 @@ from livekit.plugins import groq, azure, silero
 from logging_setup import get_logger, Component, setup_logging
 from .config import get_config
 from .context import build_dispatch_context
-from .instructions import get_instructions
+from .instructions import get_instructions, get_greeting_text, get_greeting_audio_path
 from .observability import VoicePipelineObserver
+from .google_cloud_tts import GoogleCloudTTS
 
 # Load environment variables from .env_local / .env.local (local dev convenience).
 # Note: start scripts also export env vars; this is best-effort and will not override existing.
@@ -76,14 +77,18 @@ async def entrypoint(ctx: JobContext):
         # Best-effort only; don't crash the pipeline.
         pass
 
-    session_logger.info(
+    # Log scenario being used
+    scenario_name = dispatch_ctx.flow or os.getenv("AGENT_SCENARIO", "default")
+    # Debug only - not shown in production logs
+    session_logger.debug(
         "Voice pipeline starting",
         room=ctx.room.name,
         job_id=ctx.job.id,
         flow=dispatch_ctx.flow,
+        scenario=scenario_name,
     )
 
-    session_logger.info(
+    session_logger.debug(
         "Participant joined",
         participant_identity=participant.identity,
         participant_sid=participant.sid,
@@ -93,45 +98,83 @@ async def entrypoint(ctx: JobContext):
     config = get_config()
     
     # Create observability wrapper
-    observer = VoicePipelineObserver(session_id=session_id)
+    observer = VoicePipelineObserver(
+        session_id=session_id,
+        max_duration_seconds=config.max_call_duration_seconds,
+    )
     
-    # Configure providers
-    session_logger.debug("Configuring STT provider", provider="groq")
+    # Configure providers - debug only
+    session_logger.debug(
+        "STT provider configured",
+        provider="groq",
+        model="whisper-large-v3",
+        language="nl",
+    )
     stt = groq.STT(
         model="whisper-large-v3",
         language="nl",  # Dutch
         api_key=config.groq_api_key,
     )
     
-    session_logger.debug("Configuring LLM provider", provider="groq", model=config.groq_model_llm)
+    session_logger.debug(
+        "LLM provider configured",
+        provider="groq",
+        model=config.groq_model_llm,
+        temperature=0.1,
+    )
     llm_instance = groq.LLM(
         model=config.groq_model_llm,
-        temperature=0.7,
+        # Lower temperature for more deterministic, less "creative" responses
+        temperature=0.1,
         api_key=config.groq_api_key,
     )
     
-    session_logger.debug(
-        "Configuring TTS provider",
-        provider="azure",
-        voice=config.azure_speech_voice,
-    )
-    tts = azure.TTS(
-        speech_key=config.azure_speech_key,
-        speech_region=config.azure_speech_region,
-        voice=config.azure_speech_voice,
-    )
+    # TTS provider selection
+    if config.tts_provider == "google":
+        # Google Cloud Text-to-Speech via REST API (API key authentication)
+        # Uses custom implementation that supports nl-NL-Chirp3-HD-Algenib and other voices
+        if not config.google_tts_api_key:
+            session_logger.error(
+                "Google TTS provider requested but GOOGLE_TTS_API_KEY is not set",
+            )
+            raise ValueError(
+                "Google TTS provider requires GOOGLE_TTS_API_KEY environment variable"
+            )
+        session_logger.debug(
+            "TTS provider configured",
+            provider="google_cloud_tts_rest",
+            voice=config.google_tts_voice,
+        )
+        tts = GoogleCloudTTS(
+            api_key=config.google_tts_api_key,
+            voice=config.google_tts_voice,
+            observer=observer,  # Pass observer to TTS for LLM response text logging
+        )
+    else:
+        # Default: Azure TTS
+        session_logger.debug(
+            "TTS provider configured",
+            provider="azure",
+            voice=config.azure_speech_voice,
+            region=config.azure_speech_region,
+        )
+        tts = azure.TTS(
+            speech_key=config.azure_speech_key,
+            speech_region=config.azure_speech_region,
+            voice=config.azure_speech_voice,
+        )
     
     session_logger.debug("Configuring VAD", provider="silero")
     vad = _VAD or silero.VAD.load()
     
-    # Create agent with instructions
-    session_logger.info("Creating agent")
+    # Create agent with scenario-based instructions - debug only
+    session_logger.debug("Creating agent", scenario=scenario_name)
     agent = Agent(
-        instructions=get_instructions(),
+        instructions=get_instructions(flow=dispatch_ctx.flow),
     )
     
-    # Create agent session
-    session_logger.info("Creating agent session")
+    # Create agent session - debug only
+    session_logger.debug("Creating agent session")
     session = AgentSession(
         stt=stt,
         llm=llm_instance,
@@ -146,13 +189,36 @@ async def entrypoint(ctx: JobContext):
     # Attach observability hooks
     observer.attach_to_session(session)
     
-    # Start the session
-    session_logger.info("Starting agent session")
+    # Store observer reference for TTS logging (to pass LLM response text)
+    # This is a workaround since LiveKit Agents doesn't expose LLM response directly
+    if config.tts_provider == "google":
+        # Set observer reference on TTS instance if possible
+        # Note: This requires modifying GoogleCloudTTS to accept observer
+        pass  # TODO: Implement if needed
+    
+    # Start the session - debug only
+    session_logger.debug("Starting agent session")
     await session.start(room=ctx.room, agent=agent)
     
     # Greet the user (per VC-00: natural phone conversation)
+    # Use scenario-based greeting (fixed text, currently via TTS, later can be WAV)
+    greeting_text = get_greeting_text(flow=dispatch_ctx.flow)
+    greeting_audio = get_greeting_audio_path(flow=dispatch_ctx.flow)
+    
     try:
-        await session.say("Hallo, waarmee kan ik je helpen?", allow_interruptions=True)
+        if greeting_audio:
+            # TODO: Play WAV file (future enhancement)
+            # For now, fallback to TTS
+            session_logger.debug(
+                "Greeting audio file found, but WAV playback not yet implemented",
+                audio_path=str(greeting_audio),
+            )
+            # Greeting: do not allow barge-in for the very first phrase
+            await session.say(greeting_text, allow_interruptions=False)
+        else:
+            # Use TTS for fixed greeting text
+            # Greeting: do not allow barge-in for the very first phrase
+            await session.say(greeting_text, allow_interruptions=False)
     except Exception as e:
         # Best-effort: call may already be disconnected/cancelled.
         session_logger.warning("Greeting not played", error=str(e), error_type=type(e).__name__)
@@ -160,8 +226,12 @@ async def entrypoint(ctx: JobContext):
         # VC-02: user silence after a prompt should trigger reprompt + graceful close.
         # In telephony, TTS events may not always fire; arm explicitly after greeting.
         observer.arm_user_silence_timer()
+        
+        # Arm call duration timer (starts after greeting)
+        observer.arm_call_duration_timer()
     
-    session_logger.info("Agent session started successfully")
+    # Debug only - not shown in production logs
+    session_logger.debug("Agent session started successfully")
 
 
 def prewarm(_process):

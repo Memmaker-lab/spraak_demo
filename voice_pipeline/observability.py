@@ -52,6 +52,7 @@ class VoicePipelineObserver:
         now: Callable[[], float] = time.time,
         sleep: Callable[[float], Any] = asyncio.sleep,
         silence_cfg: Optional[SilenceConfig] = None,
+        max_duration_seconds: int = 300,  # Default: 5 minutes
     ):
         self.session_id = session_id
         self.emitter = EventEmitter(ObsComponent.VOICE_PIPELINE)
@@ -71,6 +72,8 @@ class VoicePipelineObserver:
         self._last_user_activity_ts: Optional[float] = None
         self._stt_final_emitted_for_turn: bool = False
         self._llm_request_ts: Optional[float] = None
+        self._current_transcript: Optional[str] = None  # Store transcript for LLM input logging
+        self._current_llm_response: Optional[str] = None  # Store LLM response for logging (set from TTS text)
 
         # State tracking (documented events)
         self._agent_state: Optional[str] = None
@@ -87,10 +90,18 @@ class VoicePipelineObserver:
         self._delay_ack_sent_for_turn: bool = False
         self._last_agent_prompt_ts: Optional[float] = None  # When agent last prompted (for user-silence checks)
 
+        # Call duration timer
+        self._call_start_ts: Optional[float] = None  # Timestamp when call starts (after greeting)
+        self._max_duration_seconds: int = max_duration_seconds  # Maximum call duration in seconds
+        self._duration_warning_task: Optional[asyncio.Task] = None  # Task for warning timer
+        self._duration_timeout_task: Optional[asyncio.Task] = None  # Task for timeout timer
+
         self._session: Optional["AgentSession"] = None
+        self._observer_instance: Optional["VoicePipelineObserver"] = None  # For TTS to access observer
 
     def attach_to_session(self, session: "AgentSession"):
         self._session = session
+        # Debug only - not shown in production logs
         self.logger.debug("Attaching observability hooks to agent session")
 
         # Documented AgentSession events (docs: Agent session -> Events)
@@ -107,7 +118,8 @@ class VoicePipelineObserver:
         session.on("agent_started_speaking", self._on_agent_started_speaking)
         session.on("agent_stopped_speaking", self._on_agent_stopped_speaking)
 
-        self.logger.info("Observability hooks attached")
+        # Debug only - not shown in production logs
+        self.logger.debug("Observability hooks attached")
 
     def arm_user_silence_timer(self) -> None:
         """
@@ -146,11 +158,36 @@ class VoicePipelineObserver:
 
         # VC-01: turn.started MUST precede llm.request
         self._llm_request_ts = self._now()
+        
+        # Log LLM call start with input text
+        logger.info(
+            "LLM call started",
+            session_id=self.session_id,
+            correlation_id=turn_id,
+            input_text=self._current_transcript or "",
+            transcript_length=transcript_length,
+        )
+        
+        # Emit LLM request with input text (PII flagged per OBS-00)
+        llm_input_text = self._current_transcript or ""
+        llm_payload: dict[str, Any] = {}
+        if llm_input_text:
+            llm_payload["input_text"] = llm_input_text
+            llm_pii = {
+                "contains_pii": True,
+                "fields": ["input_text"],
+                "handling": "none",  # Internal audit/ops use
+            }
+        else:
+            llm_pii = None
+        
         self.emitter.emit(
             "llm.request",
             session_id=self.session_id,
             severity=Severity.INFO,
             correlation_id=turn_id,
+            pii=llm_pii,
+            **llm_payload,
         )
 
     def _emit_llm_response(self) -> None:
@@ -158,14 +195,56 @@ class VoicePipelineObserver:
         extra: dict[str, Any] = {}
         if self._llm_request_ts is not None:
             extra["latency_ms"] = int((self._now() - self._llm_request_ts) * 1000)
+            latency_ms = extra["latency_ms"]
             self._llm_request_ts = None
+        else:
+            latency_ms = None
+        
+        # Log LLM call completion with input and output text
+        # Note: output_text will be set when TTS starts (from TTS text, which is the LLM response)
+        logger.info(
+            "LLM call completed",
+            session_id=self.session_id,
+            correlation_id=turn_id,
+            input_text=self._current_transcript or "",
+            output_text=self._current_llm_response or "",  # Will be set by TTS logging when TTS starts
+            latency_ms=latency_ms,
+        )
+        
+        # Add LLM input and output text to event (PII flagged per OBS-00)
+        llm_input_text = self._current_transcript or ""
+        llm_output_text = self._current_llm_response or ""
+        pii_fields = []
+        if llm_input_text:
+            extra["input_text"] = llm_input_text
+            pii_fields.append("input_text")
+        if llm_output_text:
+            extra["output_text"] = llm_output_text
+            pii_fields.append("output_text")
+        
+        llm_pii = {
+            "contains_pii": True,
+            "fields": pii_fields,
+            "handling": "none",  # Internal audit/ops use
+        } if pii_fields else None
+        
         self.emitter.emit(
             "llm.response",
             session_id=self.session_id,
             severity=Severity.INFO,
             correlation_id=turn_id,
+            pii=llm_pii,
             **extra,
         )
+    
+    def set_llm_response_text(self, text: str) -> None:
+        """Set LLM response text from TTS (since TTS text is the LLM response)."""
+        self._current_llm_response = text
+        
+        # Log LLM call completion now that we have the response text
+        # This is called from TTS when it starts processing, which is when we have the actual LLM response
+        if self._llm_request_ts is not None:
+            self._emit_llm_response()
 
     def _emit_stt_final(
         self,
@@ -173,6 +252,7 @@ class VoicePipelineObserver:
         transcript_length: int,
         language: Optional[str],
         latency_ms: Optional[int] = None,
+        transcript_text: Optional[str] = None,
     ) -> None:
         turn_id = self.current_turn_id or self._new_turn()
         if self._stt_final_emitted_for_turn:
@@ -184,11 +264,22 @@ class VoicePipelineObserver:
         }
         if latency_ms is not None:
             payload["latency_ms"] = latency_ms
+        # Add transcript text with PII flag (per OBS-00: PII allowed for audit/ops)
+        if transcript_text:
+            payload["transcript_text"] = transcript_text
+            pii = {
+                "contains_pii": True,
+                "fields": ["transcript_text"],
+                "handling": "none",  # Internal audit/ops use
+            }
+        else:
+            pii = None
         self.emitter.emit(
             "stt.final",
             session_id=self.session_id,
             severity=Severity.INFO,
             correlation_id=turn_id,
+            pii=pii,
             **payload,
         )
 
@@ -226,20 +317,68 @@ class VoicePipelineObserver:
         transcript = event.get("text", "")
         self._new_turn()
         self._record_user_activity()
-        self._emit_stt_final(transcript_length=len(transcript), language=None)
+        
+        # Store transcript for LLM input logging
+        self._current_transcript = transcript
+        
+        # Log STT call with transcript text
+        logger.info(
+            "STT call completed",
+            session_id=self.session_id,
+            transcript=transcript,
+            transcript_length=len(transcript),
+            language=None,
+            latency_ms=None,
+            correlation_id=self.current_turn_id or self.session_id,
+        )
+        
+        self._emit_stt_final(transcript_length=len(transcript), language=None, transcript_text=transcript)
         self._emit_turn_started(transcript_length=len(transcript))
-        self._start_processing_timer()
+        # Don't start processing timer here - wait for TTS to start and finish first
+        # The timer will be started in _on_agent_stopped_speaking() after TTS completes
 
     def _on_agent_started_speaking(self, event: dict[str, Any]):
         self.tts_playing = True
-        self._emit_llm_response()
+        
+        # Cancel user-silence timer when agent starts speaking (new response is coming)
+        # This prevents the timer from firing during TTS playback
+        self._cancel_user_silence_timer()
+        
+        # Try to get LLM response text from event
+        # Note: LiveKit Agents may not provide this directly, so we'll use TTS text as fallback
+        response_text = event.get("text") or event.get("response") or event.get("message") or ""
+        if response_text:
+            self._current_llm_response = response_text
+        
+        # Don't emit LLM response here - wait for TTS text to be available via set_llm_response_text()
+        # This ensures we log the LLM call completion with the actual response text
+        # The LLM response logging will happen in set_llm_response_text() when TTS starts
+        
         self._cancel_processing_timer()
         self._tts_started_ts = self._now()
+        
+        # Emit TTS started with text (PII flagged per OBS-00)
+        # TTS text is the LLM response
+        tts_text = self._current_llm_response or ""
+        tts_payload: dict[str, Any] = {}
+        if tts_text:
+            tts_payload["text"] = tts_text
+            tts_payload["text_length"] = len(tts_text)
+            tts_pii = {
+                "contains_pii": True,
+                "fields": ["text"],
+                "handling": "none",  # Internal audit/ops use
+            }
+        else:
+            tts_pii = None
+        
         self.emitter.emit(
             "tts.started",
             session_id=self.session_id,
             severity=Severity.INFO,
             correlation_id=self.current_turn_id or self.session_id,
+            pii=tts_pii,
+            **tts_payload,
         )
 
     def _on_agent_stopped_speaking(self, event: dict[str, Any]):
@@ -251,7 +390,23 @@ class VoicePipelineObserver:
             self._barge_in_detected_ts = None
         if self._tts_started_ts is not None:
             extra["latency_ms"] = int((self._now() - self._tts_started_ts) * 1000)
+            latency_ms = extra["latency_ms"]
             self._tts_started_ts = None
+        else:
+            latency_ms = None
+        
+        # TTS logging is done in google_cloud_tts.py, so we don't log here
+        # to avoid duplicate logs. Only log if there's an error or barge-in.
+        if cause != "completed":
+            logger.info(
+                "TTS call stopped",
+                session_id=self.session_id,
+                correlation_id=self.current_turn_id or self.session_id,
+                cause=cause,
+                latency_ms=latency_ms,
+                time_to_tts_stop_ms=extra.get("time_to_tts_stop_ms"),
+            )
+        
         self.emitter.emit(
             "tts.stopped",
             session_id=self.session_id,
@@ -259,9 +414,26 @@ class VoicePipelineObserver:
             correlation_id=self.current_turn_id or self.session_id,
             **extra,
         )
-        # Record that agent just finished speaking (now), so user-silence timer checks from this point.
-        self._last_agent_prompt_ts = self._now()
-        self._start_user_silence_timer()
+        
+        # Only start timers if TTS actually completed (not barge-in or error)
+        # For multi-segment responses, we only want to start the timer after the LAST segment
+        # We detect this by checking if there's another TTS segment coming (tts_playing will be True again)
+        # But since we just set tts_playing = False, we need to wait a bit to see if it becomes True again
+        # Actually, a better approach: always start the timer, but cancel it if a new TTS segment starts
+        # This is already handled by _on_agent_started_speaking() canceling the timer
+        
+        # Only start timers if TTS completed successfully (not barge-in or error)
+        # For barge-in, the user is already speaking, so no need for silence timer
+        if cause == "completed":
+            # Record that agent just finished speaking (now), so user-silence timer checks from this point.
+            self._last_agent_prompt_ts = self._now()
+            # VC-02 fix: Start processing delay timer AFTER TTS is done, not before TTS starts.
+            # This ensures "Momentje, ik denk even mee" only triggers if there's actual processing delay
+            # after the agent has finished speaking, not during TTS playback.
+            self._start_processing_timer()
+            # Always start user-silence timer after agent stops speaking
+            # If a new TTS segment starts, _on_agent_started_speaking() will cancel it
+            self._start_user_silence_timer()
 
     # --- Documented AgentSession events ---
 
@@ -273,7 +445,8 @@ class VoicePipelineObserver:
                 # VC-01: turn starts when system commits to responding
                 self._new_turn()
                 self._emit_turn_started(transcript_length=0)
-                self._start_processing_timer()
+                # Don't start processing timer here - wait for TTS to start and finish first
+                # The timer will be started in _on_agent_stopped_speaking() after TTS completes
 
     def _on_user_state_changed(self, event: Any) -> None:
         state = _extract_state(event)
@@ -297,23 +470,45 @@ class VoicePipelineObserver:
         text, lang, delay_ms = _parse_transcription_event(event, args, kwargs)
         text = (text or "").strip()
         self._record_user_activity()
+        
+        # Store transcript for LLM input logging
+        self._current_transcript = text
 
-        # Emit STT metadata first (OBS-00: no content).
+        # Log STT call with transcript text
+        logger.info(
+            "STT call completed",
+            session_id=self.session_id,
+            transcript=text,
+            transcript_length=len(text),
+            language=lang or "unknown",
+            latency_ms=int(delay_ms * 1000) if delay_ms else None,
+            correlation_id=self.current_turn_id or self.session_id,
+        )
+
+        # Emit STT metadata with transcript text (PII flagged per OBS-00)
         had_turn = self.current_turn_id is not None
-        self._emit_stt_final(transcript_length=len(text), language=lang, latency_ms=delay_ms)
+        stt_latency_ms = int(delay_ms * 1000) if delay_ms else None
+        self._emit_stt_final(
+            transcript_length=len(text),
+            language=lang,
+            latency_ms=stt_latency_ms,
+            transcript_text=text,
+        )
 
         # Telephony safety net:
         # Some transports don't reliably emit agent_state_changed("thinking").
         # If we haven't started a turn yet, start one from the transcript so that:
         # - VC-01 ordering is still observed (turn.started -> llm.request)
-        # - VC-02 processing timer can emit "Momentje..." if needed
+        # - VC-02 processing timer will be started in _on_agent_stopped_speaking() after TTS completes
         if not had_turn:
             self._emit_turn_started(transcript_length=len(text))
-            self._start_processing_timer()
+            # Don't start processing timer here - wait for TTS to start and finish first
+            # The timer will be started in _on_agent_stopped_speaking() after TTS completes
 
     def _on_close(self, event: Any) -> None:
         self._cancel_processing_timer()
         self._cancel_user_silence_timer()
+        self._cancel_duration_timers()
 
     # --- VC-02 silence handling ---
 
@@ -328,10 +523,14 @@ class VoicePipelineObserver:
         )
 
         async def _timer():
+            # VC-02 fix: Processing timer now starts AFTER TTS is done (in _on_agent_stopped_speaking).
+            # So we don't need to wait for TTS here anymore - it's already finished.
+            # Just start the delay countdown immediately.
             await self._sleep(self._silence.processing_delay_ack_ms / 1000.0)
+            
             if self._delay_ack_sent_for_turn:
                 return
-            # Only acknowledge if we're still waiting to speak
+            # Double-check: if TTS started again during the delay countdown, skip ack
             if self.tts_playing:
                 return
             self._delay_ack_sent_for_turn = True
@@ -484,6 +683,136 @@ class VoicePipelineObserver:
                 await self._session.aclose()
             except Exception:
                 pass
+
+    # --- Call duration timer ---
+
+    def arm_call_duration_timer(self) -> None:
+        """
+        Arm the call duration timer after greeting.
+        
+        Starts two tasks:
+        - Warning task: warns user 20 seconds before max duration
+        - Timeout task: ends call after max duration
+        """
+        if self._max_duration_seconds <= 0:
+            # Timer disabled
+            return
+        
+        self._call_start_ts = self._now()
+        
+        # Cancel any existing duration timers
+        self._cancel_duration_timers()
+        
+        # Emit timer started event
+        self.emitter.emit(
+            "call.duration_timer_started",
+            session_id=self.session_id,
+            severity=Severity.INFO,
+            max_duration_seconds=self._max_duration_seconds,
+        )
+        
+        # Warning delay: 20 seconds before timeout
+        warning_delay = max(0, self._max_duration_seconds - 20)
+        timeout_delay = self._max_duration_seconds
+        
+        # Start warning task
+        if warning_delay > 0:
+            async def _warning_task():
+                try:
+                    await self._sleep(warning_delay)
+                    await self._handle_duration_warning()
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    self.logger.warning(
+                        "Duration warning task error",
+                        error=str(e),
+                        error_type=type(e).__name__,
+                    )
+            
+            self._duration_warning_task = asyncio.create_task(_warning_task())
+        
+        # Start timeout task
+        async def _timeout_task():
+            try:
+                await self._sleep(timeout_delay)
+                await self._handle_duration_timeout()
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                self.logger.error(
+                    "Duration timeout task error",
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
+        
+        self._duration_timeout_task = asyncio.create_task(_timeout_task())
+
+    async def _handle_duration_warning(self) -> None:
+        """Handle duration warning: speak warning message 20 seconds before timeout."""
+        if self._session is None:
+            return
+        
+        warning_message = "De maximale gesprekduur is bijna bereikt, het gesprek wordt over 15 seconde afgebroken"
+        
+        # Emit warning event
+        self.emitter.emit(
+            "call.duration_warning",
+            session_id=self.session_id,
+            severity=Severity.INFO,
+            remaining_seconds=15,
+        )
+        
+        # Speak warning (barge-in allowed)
+        try:
+            await self._session.say(warning_message, allow_interruptions=True)
+        except Exception as e:
+            # Best-effort: log error but continue with timeout
+            self.logger.warning(
+                "Duration warning TTS failed",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            self.emitter.emit(
+                "ux.prompt_failed",
+                session_id=self.session_id,
+                severity=Severity.WARN,
+                message_key="duration_warning",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+
+    async def _handle_duration_timeout(self) -> None:
+        """Handle duration timeout: end call after max duration."""
+        # Emit call ended event
+        self.emitter.emit(
+            "call.ended",
+            session_id=self.session_id,
+            severity=Severity.INFO,
+            reason="max_duration_reached",
+        )
+        
+        # Request hangup via Control Plane
+        cp_ok = await request_hangup(self.session_id)
+        
+        # Fallback: close session directly if hangup fails
+        if not cp_ok and self._session is not None:
+            try:
+                await self._session.aclose()
+            except Exception:
+                pass
+
+    def _cancel_duration_timers(self) -> None:
+        """Cancel duration timer tasks."""
+        if self._duration_warning_task is not None:
+            if not self._duration_warning_task.done():
+                self._duration_warning_task.cancel()
+            self._duration_warning_task = None
+        
+        if self._duration_timeout_task is not None:
+            if not self._duration_timeout_task.done():
+                self._duration_timeout_task.cancel()
+            self._duration_timeout_task = None
 
 
 def _extract_state(event: Any) -> Optional[str]:

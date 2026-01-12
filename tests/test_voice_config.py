@@ -84,6 +84,7 @@ def test_config_dataclass_immutable():
         livekit_api_secret="secret",
         groq_api_key="groq_key",
         groq_model_llm="model",
+        tts_provider="azure",
         azure_speech_key="azure_key",
         azure_speech_region="region",
         azure_speech_voice="voice",

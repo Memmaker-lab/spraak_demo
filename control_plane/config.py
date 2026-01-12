@@ -21,6 +21,9 @@ class Config:
     # Webhook configuration (for receiving LiveKit events)
     webhook_secret: Optional[str] = None  # Same as API secret typically
     
+    # CORS configuration (for web app access)
+    cors_origins: list[str]  # Allowed origins for CORS
+    
     def __init__(self):
         """Load configuration from environment variables."""
         # Try .env_local first, then regular env
@@ -46,6 +49,17 @@ class Config:
         
         # Webhook secret (use API secret if not specified)
         self.webhook_secret = os.getenv("WEBHOOK_SECRET") or self.livekit_api_secret
+        
+        # CORS configuration
+        # Default: allow common development origins + all origins if CORS_ALLOW_ALL is set
+        cors_allow_all = os.getenv("CORS_ALLOW_ALL", "").lower() in ("true", "1", "yes")
+        if cors_allow_all:
+            # Development mode: allow all origins
+            self.cors_origins = ["*"]
+        else:
+            # Production mode: allow specific origins
+            cors_origins_str = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173")
+            self.cors_origins = [origin.strip() for origin in cors_origins_str.split(",") if origin.strip()]
         
         # Validate required fields
         if not self.livekit_url:

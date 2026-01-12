@@ -5,6 +5,7 @@ Can be run standalone or integrated into existing web server.
 import json
 from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from .webhook_handler import webhook_handler
 from .config import config
@@ -13,6 +14,31 @@ from .control_api import router as control_router
 
 app = FastAPI(title="Control Plane Webhook Server")
 logger = get_logger(Component.WEBHOOK_SERVER)
+
+# Configure CORS for web app access
+# Origins are configured via CORS_ORIGINS env var (comma-separated)
+# Or set CORS_ALLOW_ALL=true for development (allows all origins)
+if config.cors_origins == ["*"]:
+    # Development mode: allow all origins
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,  # Cannot use credentials with wildcard
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    logger.info("CORS enabled: allowing all origins (development mode)")
+else:
+    # Production mode: allow specific origins
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.cors_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["*"],
+    )
+    logger.info("CORS enabled", allowed_origins=config.cors_origins)
+
 app.include_router(control_router)
 
 

@@ -89,10 +89,16 @@ def test_tts_started_event(capsys):
     observer = VoicePipelineObserver(session_id="sess_123")
     observer.current_turn_id = "turn_789"
     
+    # Start a turn first (this sets _llm_request_ts)
+    observer._emit_turn_started(transcript_length=10)
+    
     event = {}
     observer._on_agent_started_speaking(event)
     
     assert observer.tts_playing is True
+    
+    # Set LLM response text (simulating TTS call) - this triggers LLM response logging
+    observer.set_llm_response_text("Test response")
     
     # Check event was emitted
     captured = capsys.readouterr()

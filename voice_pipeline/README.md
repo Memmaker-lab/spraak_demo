@@ -249,15 +249,41 @@ LiveKit ends the call by deleting the room (telephony docs: hangup -> delete_roo
 
 ### Customization
 
-#### Change LLM instructions
+#### Change LLM instructions and greetings (Scenarios)
 
-Edit `voice_pipeline/instructions.py`:
+The system now supports scenario-based configurations with different prompts and greetings.
 
-```python
-AGENT_INSTRUCTIONS = """
-Je bent een doktersassistent...
-"""
+**Option 1: Use existing scenario**
+
+Set via environment variable:
+```bash
+export AGENT_SCENARIO=domijn
+./start_agent.sh
 ```
+
+Or via LiveKit job metadata (production):
+```json
+{
+  "flow": "domijn",
+  "session_id": "call-123"
+}
+```
+
+**Option 2: Create new scenario**
+
+1. Create `voice_pipeline/scenarios/my_scenario.json`:
+```json
+{
+  "name": "my_scenario",
+  "prompt": "Je bent een doktersassistent...",
+  "greeting_text": "Goedendag, u spreekt met de doktersassistent.",
+  "greeting_audio": null
+}
+```
+
+2. Use it: `export AGENT_SCENARIO=my_scenario`
+
+See `voice_pipeline/scenarios/README.md` for more details.
 
 #### Change TTS voice
 
@@ -310,7 +336,11 @@ voice_pipeline/
 ├── __init__.py          # Module initialization
 ├── agent.py             # Main agent entrypoint
 ├── config.py            # Configuration loading
-├── instructions.py      # LLM system instructions
+├── instructions.py      # Scenario loading and LLM system instructions
+├── scenarios/           # Scenario configurations (JSON)
+│   ├── default.json
+│   ├── domijn.json
+│   └── README.md
 ├── observability.py     # Event emission (OBS-00)
 └── README.md            # This file
 
