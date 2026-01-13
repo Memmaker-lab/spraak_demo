@@ -15,6 +15,6 @@ echo ""
 
 python -m voice_pipeline.agent console \
   --input-device "MacBook Air microfoon" \
-  --output-device "MacBook Air luidsprekers"
- # --output-device "1MORE HQ51"
+  #--output-device "MacBook Air luidsprekers" \
+  --output-device "1MORE HQ51"
 
