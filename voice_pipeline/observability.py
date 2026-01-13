@@ -395,17 +395,17 @@ class VoicePipelineObserver:
         else:
             latency_ms = None
         
-        # TTS logging is done in google_cloud_tts.py, so we don't log here
-        # to avoid duplicate logs. Only log if there's an error or barge-in.
-        if cause != "completed":
-            logger.info(
-                "TTS call stopped",
-                session_id=self.session_id,
-                correlation_id=self.current_turn_id or self.session_id,
-                cause=cause,
-                latency_ms=latency_ms,
-                time_to_tts_stop_ms=extra.get("time_to_tts_stop_ms"),
-            )
+        # Log TTS completion with latency_ms for all providers
+        # (Google Cloud TTS has additional logging in google_cloud_tts.py, but this ensures
+        # Azure TTS and other providers also get latency logging)
+        logger.info(
+            "TTS call stopped",
+            session_id=self.session_id,
+            correlation_id=self.current_turn_id or self.session_id,
+            cause=cause,
+            latency_ms=latency_ms,
+            time_to_tts_stop_ms=extra.get("time_to_tts_stop_ms"),
+        )
         
         self.emitter.emit(
             "tts.stopped",
