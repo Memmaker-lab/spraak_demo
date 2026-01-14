@@ -130,6 +130,34 @@ async def entrypoint(ctx: JobContext):
         api_key=config.groq_api_key,
     )
     
+    # LLM warmup - prevent cold start latency on first real call
+    async def warmup_llm():
+        """Make a tiny dummy request to warm up the LLM connection."""
+        import time
+        t_start = time.perf_counter()
+        try:
+            chat_ctx = llm.ChatContext()
+            chat_ctx.append(role="user", text="Hi")
+            async with llm_instance.chat(chat_ctx=chat_ctx) as stream:
+                async for _ in stream:
+                    break  # We only need first token to confirm connection
+            latency_ms = int((time.perf_counter() - t_start) * 1000)
+            session_logger.info(
+                "LLM warmup completed",
+                session_id=session_id,
+                latency_ms=latency_ms,
+            )
+        except Exception as e:
+            session_logger.warning(
+                "LLM warmup failed (non-fatal)",
+                session_id=session_id,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+    
+    # Run warmup in background (don't block agent startup)
+    asyncio.create_task(warmup_llm())
+    
     # TTS provider selection
     if config.tts_provider == "google":
         # Google Cloud Text-to-Speech
