@@ -134,11 +134,16 @@ class _GoogleCloudStreamingChunkedStream(tts_module.ChunkedStream):
             total_audio_bytes = 0
             chunk_count = 0
             
-            # Create streaming config
+            # Create streaming config with audio encoding and sample rate
+            # Note: Streaming API only supports PCM, ALAW, MULAW, OGG_OPUS (not LINEAR16)
             streaming_config = texttospeech.StreamingSynthesizeConfig(
                 voice=texttospeech.VoiceSelectionParams(
                     name=self._tts._voice,
                     language_code="nl-NL",
+                ),
+                streaming_audio_config=texttospeech.StreamingAudioConfig(
+                    audio_encoding=texttospeech.AudioEncoding.PCM,
+                    sample_rate_hertz=self._tts._sample_rate,
                 )
             )
             
