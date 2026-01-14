@@ -43,7 +43,7 @@ class GoogleCloudStreamingTTS(tts_module.TTS):
         sample_rate = int(os.getenv("GOOGLE_TTS_SAMPLE_RATE", "16000"))
         
         super().__init__(
-            capabilities=tts_module.TTSCapabilities(streaming=True),  # Streaming enabled!
+            capabilities=tts_module.TTSCapabilities(streaming=False),  # Chunked synthesis (not continuous streaming)
             sample_rate=sample_rate,
             num_channels=1,
         )
