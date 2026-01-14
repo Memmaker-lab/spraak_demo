@@ -64,6 +64,7 @@ class VoiceConfig:
     google_tts_api_key: Optional[str] = None
     google_tts_voice: str = "nl-NL-Chirp3-HD-Algenib"  # Supports Gemini voices via REST API
     google_tts_gender: str = "male"  # Not used by REST API, kept for compatibility
+    google_tts_use_streaming: bool = False  # Use bidirectional streaming (requires service account auth)
     
     # Call duration limits
     max_call_duration_seconds: int = 300  # Maximum call duration in seconds (default: 5 minutes)
@@ -85,6 +86,7 @@ class VoiceConfig:
             google_tts_api_key=os.environ.get("GOOGLE_TTS_API_KEY") or os.environ.get("GOOGLE_API_KEY"),
             google_tts_voice=os.environ.get("GOOGLE_TTS_VOICE", "nl-NL-Chirp3-HD-Algenib"),
             google_tts_gender=os.environ.get("GOOGLE_TTS_GENDER", "male"),
+            google_tts_use_streaming=os.environ.get("GOOGLE_TTS_USE_STREAMING", "false").lower() in ("true", "1", "yes"),
             max_call_duration_seconds=_parse_int_env("MAX_CALL_DURATION_SECONDS", default=60),
         )
 

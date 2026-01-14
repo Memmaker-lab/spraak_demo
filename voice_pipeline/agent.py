@@ -29,6 +29,7 @@ from .context import build_dispatch_context
 from .instructions import get_instructions, get_greeting_text, get_greeting_audio_path
 from .observability import VoicePipelineObserver
 from .google_cloud_tts import GoogleCloudTTS
+from .google_cloud_tts_streaming import GoogleCloudStreamingTTS
 
 # Load environment variables from .env_local / .env.local (local dev convenience).
 # Note: start scripts also export env vars; this is best-effort and will not override existing.
@@ -131,25 +132,40 @@ async def entrypoint(ctx: JobContext):
     
     # TTS provider selection
     if config.tts_provider == "google":
-        # Google Cloud Text-to-Speech via REST API (API key authentication)
-        # Uses custom implementation that supports nl-NL-Chirp3-HD-Algenib and other voices
-        if not config.google_tts_api_key:
-            session_logger.error(
-                "Google TTS provider requested but GOOGLE_TTS_API_KEY is not set",
+        # Google Cloud Text-to-Speech
+        # Choose between streaming (gRPC, lower latency) or REST API
+        if config.google_tts_use_streaming:
+            # Streaming TTS (requires service account authentication via GOOGLE_APPLICATION_CREDENTIALS)
+            session_logger.debug(
+                "TTS provider configured",
+                provider="google_cloud_tts_streaming",
+                voice=config.google_tts_voice,
+                streaming=True,
             )
-            raise ValueError(
-                "Google TTS provider requires GOOGLE_TTS_API_KEY environment variable"
+            tts = GoogleCloudStreamingTTS(
+                voice=config.google_tts_voice,
+                observer=observer,
             )
-        session_logger.debug(
-            "TTS provider configured",
-            provider="google_cloud_tts_rest",
-            voice=config.google_tts_voice,
-        )
-        tts = GoogleCloudTTS(
-            api_key=config.google_tts_api_key,
-            voice=config.google_tts_voice,
-            observer=observer,  # Pass observer to TTS for LLM response text logging
-        )
+        else:
+            # REST API (requires API key)
+            if not config.google_tts_api_key:
+                session_logger.error(
+                    "Google TTS provider requested but GOOGLE_TTS_API_KEY is not set",
+                )
+                raise ValueError(
+                    "Google TTS provider requires GOOGLE_TTS_API_KEY environment variable"
+                )
+            session_logger.debug(
+                "TTS provider configured",
+                provider="google_cloud_tts_rest",
+                voice=config.google_tts_voice,
+                streaming=False,
+            )
+            tts = GoogleCloudTTS(
+                api_key=config.google_tts_api_key,
+                voice=config.google_tts_voice,
+                observer=observer,
+            )
     else:
         # Default: Azure TTS
         session_logger.debug(
