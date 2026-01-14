@@ -137,7 +137,7 @@ async def entrypoint(ctx: JobContext):
         t_start = time.perf_counter()
         try:
             chat_ctx = llm.ChatContext()
-            chat_ctx.append(role="user", text="Hi")
+            chat_ctx.messages.append(llm.ChatMessage(role="user", content="Hi"))
             async with llm_instance.chat(chat_ctx=chat_ctx) as stream:
                 async for _ in stream:
                     break  # We only need first token to confirm connection
@@ -170,10 +170,24 @@ async def entrypoint(ctx: JobContext):
                 voice=config.google_tts_voice,
                 streaming=True,
             )
-            tts = GoogleCloudStreamingTTS(
-                voice=config.google_tts_voice,
-                observer=observer,
-            )
+            try:
+                tts = GoogleCloudStreamingTTS(
+                    voice=config.google_tts_voice,
+                    observer=observer,
+                )
+            except Exception as e:
+                # Fallback to Azure TTS if Google credentials are missing/invalid
+                session_logger.warning(
+                    "Google Cloud Streaming TTS initialization failed, falling back to Azure TTS",
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    fallback_provider="azure",
+                )
+                tts = azure.TTS(
+                    voice=config.azure_speech_voice,
+                    speech_key=config.azure_speech_key,
+                    speech_region=config.azure_speech_region,
+                )
         else:
             # REST API (requires API key)
             if not config.google_tts_api_key:

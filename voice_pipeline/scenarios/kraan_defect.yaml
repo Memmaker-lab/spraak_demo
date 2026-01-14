@@ -26,7 +26,7 @@ prompt: |
       Voorbeeldvraag: "Om de melding te maken heb ik uw naam nodig. Wat is uw voornaam en achternaam?"
   - adres:
       Beschrijving: Straat, huisnummer en woonplaats van de huurder (geen postcode)
-      Voorbeeldvraag: "En wat is de straat, huisnummer en woonplaats van de woning waar de kraan lekt?"
+      Voorbeeldvraag: "En wat is de straat, het huisnummer en de woonplaats van de huurwoning waar de kraan lekt?"
 
   LOGIC:
   Detecteer zelf wanneer alle velden compleet zijn door te controleren of je voor elk veld een waarde hebt verzameld.
