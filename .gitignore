@@ -28,3 +28,7 @@ ENV/
 .env.local
 .env_local
 
+
+# Google Cloud credentials
+spraak_tts_google_key.json
+*_google_key.json

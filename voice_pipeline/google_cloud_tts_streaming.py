@@ -15,7 +15,7 @@ import struct
 import time
 from typing import Optional
 
-from google.cloud import texttospeech
+from google.cloud import texttospeech_v1 as texttospeech
 from livekit.agents import tts as tts_module
 from livekit.agents._exceptions import APIError
 from livekit.agents.types import APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS
@@ -59,9 +59,9 @@ class GoogleCloudStreamingTTS(tts_module.TTS):
                 recommendation="Use Chirp3-HD voices for streaming support"
             )
         
-        # Create client (authenticated via GOOGLE_APPLICATION_CREDENTIALS)
+        # Create async client (authenticated via GOOGLE_APPLICATION_CREDENTIALS)
         try:
-            self._client = texttospeech.TextToSpeechClient()
+            self._client = texttospeech.TextToSpeechAsyncClient()
             logger.info("Google Cloud Streaming TTS client initialized", voice=voice)
         except Exception as e:
             logger.error(
@@ -148,16 +148,16 @@ class _GoogleCloudStreamingChunkedStream(tts_module.ChunkedStream):
             )
             
             # Request generator: send config, then text
-            def request_generator():
+            async def request_generator():
                 yield config_request
                 yield texttospeech.StreamingSynthesizeRequest(
                     input=texttospeech.StreamingSynthesisInput(text=text)
                 )
             
-            # Stream audio responses
-            responses = self._tts._client.streaming_synthesize(request_generator())
+            # Stream audio responses (async)
+            stream = await self._tts._client.streaming_synthesize(request_generator())
             
-            for response in responses:
+            async for response in stream:
                 if response.audio_content:
                     chunk_count += 1
                     chunk_size = len(response.audio_content)

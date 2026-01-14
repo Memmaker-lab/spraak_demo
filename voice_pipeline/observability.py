@@ -349,10 +349,10 @@ class VoicePipelineObserver:
         response_text = event.get("text") or event.get("response") or event.get("message") or ""
         if response_text:
             self._current_llm_response = response_text
-        
-        # Don't emit LLM response here - wait for TTS text to be available via set_llm_response_text()
-        # This ensures we log the LLM call completion with the actual response text
-        # The LLM response logging will happen in set_llm_response_text() when TTS starts
+            # For Azure TTS and other providers that don't call set_llm_response_text directly,
+            # emit the LLM response event now that we have the text
+            if self._llm_request_ts is not None:
+                self._emit_llm_response()
         
         self._cancel_processing_timer()
         self._tts_started_ts = self._now()
@@ -866,6 +866,12 @@ def _parse_transcription_event(
     text: Optional[str] = kw_text if isinstance(kw_text, str) else None
     lang: Optional[str] = kwargs.get("language") if isinstance(kwargs.get("language"), str) else None
     delay_ms: Optional[int] = None
+    
+    # Try to get transcript_delay from kwargs first (LiveKit may pass it here)
+    if "transcript_delay" in kwargs:
+        td = kwargs["transcript_delay"]
+        if isinstance(td, (int, float)):
+            delay_ms = int(td * 1000)
 
     # If handler is invoked with extra positional args, they often carry (text, language, ...)
     # Only override if we don't already have values.
